@@ -1,6 +1,19 @@
+import logging
 import os
 import uuid
 from typing import Dict, List, Optional
+
+# MUST run before importing agent/razorpay_client -- both read env vars
+# (GEMINI_API_KEY, RAZORPAY_KEY_ID, etc.) at module import time via
+# os.environ.get(...). If .env isn't loaded first, those reads silently
+# return "" and everything downstream falls back / 500s with no obvious
+# cause. This was the root cause of both the mandate 500 and the LLM
+# never firing -- python-dotenv was in requirements.txt but never
+# actually invoked anywhere.
+from dotenv import load_dotenv
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -78,6 +91,19 @@ def create_mandate(req: CreateMandateRequest):
     the amount the user wants to block. The frontend opens Checkout.js
     against this order. This is a genuine Razorpay API call, not mocked.
     """
+    # Fail with a clear 400 instead of an opaque 500 if the request itself
+    # is invalid (e.g. above Reserve Pay's real Rs 10,000 block cap) --
+    # this check is cheap and doesn't require calling Razorpay at all.
+    if req.max_amount <= 0 or req.per_txn_cap <= 0:
+        raise HTTPException(status_code=400, detail="max_amount and per_txn_cap must be positive.")
+    if req.max_amount > mandate_mod.MAX_BLOCK_AMOUNT_PAISE / 100:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Reserve Pay caps blocks at Rs {mandate_mod.MAX_BLOCK_AMOUNT_PAISE/100:.0f}. Lower max_amount.",
+        )
+    if req.per_txn_cap > req.max_amount:
+        raise HTTPException(status_code=400, detail="per_txn_cap cannot exceed max_amount.")
+
     try:
         order = razorpay_client.create_authorization_order(
             amount_rupees=req.max_amount,
@@ -85,15 +111,25 @@ def create_mandate(req: CreateMandateRequest):
             notes={"purpose": "agentic_checkout_mandate_authorization"},
         )
     except RuntimeError as e:
+        # Missing/unset API keys -- most common cause of a 500 here.
         raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        # Razorpay SDK errors (bad key format, invalid request, network
+        # issue, etc). Surfacing the real message instead of a blank 500
+        # is the difference between debugging in 10 seconds vs 10 minutes.
+        raise HTTPException(status_code=502, detail=f"Razorpay order creation failed: {e}")
 
-    m = mandate_mod.store.create(
-        user_id=req.session_id,
-        max_amount_rupees=req.max_amount,
-        per_txn_cap_rupees=req.per_txn_cap,
-        razorpay_order_id=order["id"],
-        days_valid=req.days_valid,
-    )
+    try:
+        m = mandate_mod.store.create(
+            user_id=req.session_id,
+            max_amount_rupees=req.max_amount,
+            per_txn_cap_rupees=req.per_txn_cap,
+            razorpay_order_id=order["id"],
+            days_valid=req.days_valid,
+        )
+    except mandate_mod.DebitError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
     return {
         "mandate_id": m.id,
         "razorpay_order_id": order["id"],
