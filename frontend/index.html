@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Agentic Checkout — UPI Reserve Pay Demo</title>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B1120; --panel:#111A2E; --panel-2:#0E1626; --line:#232E48;
+    --text:#E7ECF5; --muted:#8996B0; --muted-2:#5D6A88;
+    --safe:#34D399; --safe-dim:#0F3A2E; --warn:#F5A524; --danger:#F87171; --danger-dim:#3A1414;
+    --brand:#5B7CFA;
+    --mono:'JetBrains Mono', monospace; --disp:'Space Grotesk', sans-serif; --body:'Inter', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--ink); color:var(--text); font-family:var(--body); min-height:100vh;}
+  .app{display:grid; grid-template-columns: 1.15fr 1fr; gap:1px; background:var(--line); min-height:100vh;}
+  @media (max-width: 900px){ .app{grid-template-columns:1fr;} }
+
+  header.top{grid-column:1/-1; display:flex; align-items:center; justify-content:space-between;
+    padding:16px 24px; background:var(--panel-2); border-bottom:1px solid var(--line);}
+  .brand{display:flex; align-items:center; gap:10px; font-family:var(--disp); font-weight:700; font-size:18px;}
+  .brand .dot{width:9px; height:9px; border-radius:50%; background:var(--safe); box-shadow:0 0 12px var(--safe);}
+  .subtag{color:var(--muted); font-size:12.5px; font-family:var(--mono);}
+
+  .col{background:var(--panel); display:flex; flex-direction:column; min-height:0;}
+
+  /* ---- Chat column ---- */
+  .chat-col{padding:20px; gap:14px;}
+  .msgs{flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:4px 2px 12px; min-height:340px;}
+  .msg{max-width:82%; padding:10px 14px; border-radius:12px; font-size:14.5px; line-height:1.5; white-space:pre-wrap;}
+  .msg.user{align-self:flex-end; background:var(--brand); color:white; border-bottom-right-radius:3px;}
+  .msg.agent{align-self:flex-start; background:var(--panel-2); border:1px solid var(--line); border-bottom-left-radius:3px;}
+  .msg.system{align-self:center; color:var(--muted); font-family:var(--mono); font-size:12px; background:none;}
+  .composer{display:flex; gap:8px;}
+  .composer input{flex:1; background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+    padding:12px 14px; border-radius:10px; font-size:14px; font-family:var(--body);}
+  .composer input:focus{outline:none; border-color:var(--brand);}
+  .composer button, .btn{background:var(--brand); color:white; border:none; padding:12px 18px; border-radius:10px;
+    font-weight:600; cursor:pointer; font-size:14px; font-family:var(--body); transition:transform .12s ease, opacity .12s ease;}
+  .composer button:hover, .btn:hover{opacity:.9;}
+  .composer button:active, .btn:active{transform:scale(.97);}
+  .quickrow{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:4px;}
+  .chip{border:1px solid var(--line); color:var(--muted); background:var(--panel-2); padding:6px 12px;
+    border-radius:999px; font-size:12.5px; cursor:pointer; font-family:var(--mono);}
+  .chip:hover{border-color:var(--brand); color:var(--text);}
+
+  /* ---- Right column: mandate + ledger ---- */
+  .right-col{padding:20px; gap:18px;}
+  .card{background:var(--panel-2); border:1px solid var(--line); border-radius:14px; padding:18px;}
+  .card h3{margin:0 0 12px; font-family:var(--disp); font-size:14px; letter-spacing:.02em; color:var(--muted); font-weight:600; text-transform:uppercase;}
+
+  .reserve-meter .amounts{display:flex; justify-content:space-between; font-family:var(--mono); font-size:13px; color:var(--muted); margin-bottom:8px;}
+  .reserve-meter .amounts b{color:var(--text); font-size:15px;}
+  .meter-track{height:14px; background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; position:relative;}
+  .meter-fill{height:100%; background:linear-gradient(90deg, var(--safe), #22c98a); width:0%; transition:width .5s cubic-bezier(.4,0,.2,1);}
+  .meter-fill.warn{background:linear-gradient(90deg, var(--warn), #d98c1a);}
+  .meter-ticks{display:flex; justify-content:space-between; margin-top:6px; font-family:var(--mono); font-size:10px; color:var(--muted-2);}
+  .status-pill{display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11.5px;
+    padding:4px 10px; border-radius:999px; margin-top:12px; border:1px solid var(--line);}
+  .status-pill.authorized{color:var(--safe); border-color:var(--safe-dim); background:var(--safe-dim);}
+  .status-pill.none{color:var(--muted);}
+  .status-pill .dot{width:6px; height:6px; border-radius:50%; background:currentColor;}
+
+  .field{margin-bottom:10px;}
+  .field label{display:block; font-size:12px; color:var(--muted); margin-bottom:5px; font-family:var(--mono);}
+  .field input{width:100%; background:var(--panel); border:1px solid var(--line); color:var(--text);
+    padding:9px 11px; border-radius:8px; font-family:var(--mono); font-size:13.5px;}
+  .field input:focus{outline:none; border-color:var(--brand);}
+  .field-row{display:flex; gap:10px;}
+  .field-row .field{flex:1;}
+  .btn-full{width:100%; margin-top:6px;}
+  .btn-danger{background:transparent; border:1px solid var(--danger); color:var(--danger);}
+
+  .ledger{display:flex; flex-direction:column; gap:8px; max-height:220px; overflow-y:auto;}
+  .ledger-empty{color:var(--muted-2); font-size:12.5px; font-family:var(--mono); text-align:center; padding:16px 0;}
+  .lrow{display:flex; align-items:center; justify-content:space-between; gap:10px; font-family:var(--mono);
+    font-size:12px; padding:9px 10px; border-radius:8px; background:var(--panel); border:1px solid var(--line);
+    animation:slidein .3s ease;}
+  .lrow.success{border-left:3px solid var(--safe);}
+  .lrow.blocked{border-left:3px solid var(--danger);}
+  @keyframes slidein{from{opacity:0; transform:translateX(6px);} to{opacity:1; transform:translateX(0);}}
+  .lrow .reason{color:var(--muted); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .lrow .amt{color:var(--text); font-weight:600;}
+  .lrow.blocked .amt{color:var(--danger);}
+
+  .products{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .pcard{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px; font-size:12.5px;}
+  .pcard .pname{font-weight:600; margin-bottom:3px;}
+  .pcard .pprice{font-family:var(--mono); color:var(--safe);}
+  .pcard .psku{color:var(--muted-2); font-family:var(--mono); font-size:10.5px;}
+
+  .badge-mode{font-family:var(--mono); font-size:11px; color:var(--muted); border:1px solid var(--line); padding:3px 9px; border-radius:999px;}
+  .cfg{font-size:11.5px; color:var(--muted-2); font-family:var(--mono); margin-top:8px;}
+  .cfg input{background:transparent; border:none; border-bottom:1px dashed var(--muted-2); color:var(--muted);
+    font-family:var(--mono); font-size:11px; width:180px;}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <div class="brand"><span class="dot"></span> Agentic Checkout <span class="subtag">/ UPI Reserve Pay demo</span></div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <span class="badge-mode" id="modeBadge">mode: connecting…</span>
+      <label class="cfg">api: <input id="apiBase" value="http://localhost:8000" /></label>
+    </div>
+  </header>
+
+  <section class="col chat-col">
+    <div class="quickrow">
+      <div class="chip" data-q="show me earbuds under 3000">earbuds under 3000</div>
+      <div class="chip" data-q="add sku_006 to cart">add charger</div>
+      <div class="chip" data-q="view cart">view cart</div>
+      <div class="chip" data-q="checkout">checkout</div>
+    </div>
+    <div class="msgs" id="msgs"></div>
+    <div class="composer">
+      <input id="msgInput" placeholder="Ask the agent to find, add, or buy something…" />
+      <button id="sendBtn">Send</button>
+    </div>
+  </section>
+
+  <section class="col right-col">
+    <div class="card reserve-meter">
+      <h3>Reserve mandate</h3>
+      <div class="amounts"><span>Utilised</span><span><b id="utilisedAmt">₹0</b> / <span id="maxAmt">₹0</span></span></div>
+      <div class="meter-track"><div class="meter-fill" id="meterFill"></div></div>
+      <div class="meter-ticks"><span>0</span><span id="perTxnTick">cap: —</span><span id="maxTick">₹0</span></div>
+      <div id="statusPill" class="status-pill none"><span class="dot"></span> No mandate authorized</div>
+
+      <div id="mandateForm" style="margin-top:16px;">
+        <div class="field-row">
+          <div class="field"><label>Block amount (₹)</label><input id="maxAmountInput" type="number" value="5000" /></div>
+          <div class="field"><label>Per-txn cap (₹)</label><input id="perTxnInput" type="number" value="2000" /></div>
+        </div>
+        <button class="btn btn-full" id="authBtn">Authorize with Razorpay (test)</button>
+      </div>
+      <button class="btn btn-danger btn-full" id="revokeBtn" style="display:none;">Revoke mandate</button>
+    </div>
+
+    <div class="card">
+      <h3>Debit ledger</h3>
+      <div class="ledger" id="ledger"><div class="ledger-empty">No transactions yet</div></div>
+    </div>
+
+    <div class="card">
+      <h3>Catalog snapshot</h3>
+      <div class="products" id="products"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const sessionId = 'sess_' + Math.random().toString(36).slice(2, 10);
+
+let state = {
+  mandate: null,     // {mandate_id, status, max_amount, per_txn_cap, utilised, available, ledger}
+  cart: [],
+  demoMode: false,
+};
+
+function apiBase(){ return $('apiBase').value.replace(/\/$/, ''); }
+
+// ---------------- Chat rendering ----------------
+function addMsg(text, cls){
+  const el = document.createElement('div');
+  el.className = 'msg ' + cls;
+  el.textContent = text;
+  $('msgs').appendChild(el);
+  $('msgs').scrollTop = $('msgs').scrollHeight;
+}
+addMsg("Hi! I'm your shopping agent. Authorize a spending mandate on the right, then ask me to find and buy things — I won't need a PIN for each purchase.", 'agent');
+
+// ---------------- Health check / mode ----------------
+async function checkBackend(){
+  try{
+    const r = await fetch(apiBase() + '/api/health', { signal: AbortSignal.timeout(2500) });
+    const j = await r.json();
+    state.demoMode = false;
+    $('modeBadge').textContent = 'mode: live backend' + (j.razorpay_configured ? ' + razorpay' : ' (no razorpay keys set)');
+  } catch(e){
+    state.demoMode = true;
+    $('modeBadge').textContent = 'mode: local demo (backend unreachable)';
+  }
+  loadProducts();
+}
+
+// ---------------- Products ----------------
+const DEMO_CATALOG = [
+  {id:'sku_001', name:'Wireless Earbuds Pro', price:2499},
+  {id:'sku_002', name:'Mechanical Keyboard 87-key', price:3999},
+  {id:'sku_003', name:'Steel Water Bottle 1L', price:599},
+  {id:'sku_006', name:'USB-C Fast Charger 65W', price:1299},
+];
+
+async function loadProducts(){
+  let items = DEMO_CATALOG;
+  if(!state.demoMode){
+    try{
+      const r = await fetch(apiBase() + '/api/products');
+      const j = await r.json();
+      items = j.items;
+    }catch(e){}
+  }
+  $('products').innerHTML = items.slice(0,4).map(i => `
+    <div class="pcard"><div class="pname">${i.name}</div>
+    <div class="pprice">₹${i.price}</div><div class="psku">${i.id}</div></div>
+  `).join('');
+}
+
+// ---------------- Mandate UI ----------------
+function renderMandate(){
+  const m = state.mandate;
+  const max = m ? m.max_amount : Number($('maxAmountInput').value || 0);
+  const utilised = m ? m.utilised : 0;
+  const pct = max > 0 ? Math.min(100, (utilised / max) * 100) : 0;
+  $('utilisedAmt').textContent = '₹' + utilised.toFixed(0);
+  $('maxAmt').textContent = '₹' + max.toFixed(0);
+  $('maxTick').textContent = '₹' + max.toFixed(0);
+  $('perTxnTick').textContent = 'cap: ₹' + (m ? m.per_txn_cap : $('perTxnInput').value);
+  const fill = $('meterFill');
+  fill.style.width = pct + '%';
+  fill.classList.toggle('warn', pct > 70);
+
+  const pill = $('statusPill');
+  if(m && m.status === 'AUTHORIZED'){
+    pill.className = 'status-pill authorized';
+    pill.innerHTML = '<span class="dot"></span> Authorized — agent can spend up to ₹' + m.available.toFixed(0) + ' more';
+    $('mandateForm').style.display = 'none';
+    $('revokeBtn').style.display = 'block';
+  } else {
+    pill.className = 'status-pill none';
+    pill.innerHTML = '<span class="dot"></span> No mandate authorized';
+    $('mandateForm').style.display = 'block';
+    $('revokeBtn').style.display = 'none';
+  }
+
+  const ledgerEl = $('ledger');
+  const entries = m ? m.ledger : [];
+  if(!entries.length){
+    ledgerEl.innerHTML = '<div class="ledger-empty">No transactions yet</div>';
+  } else {
+    ledgerEl.innerHTML = entries.slice().reverse().map(e => `
+      <div class="lrow ${e.status === 'SUCCESS' ? 'success' : 'blocked'}">
+        <span class="reason">${e.reason}</span>
+        <span class="amt">${e.status === 'SUCCESS' ? '−' : '⛔'}₹${e.amount.toFixed(0)}</span>
+      </div>
+    `).join('');
+  }
+}
+renderMandate();
+
+// ---------------- Authorization flow (real Razorpay in live mode) ----------------
+$('authBtn').addEventListener('click', async () => {
+  const maxAmount = Number($('maxAmountInput').value);
+  const perTxnCap = Number($('perTxnInput').value);
+  if(!maxAmount || maxAmount <= 0){ addMsg('Enter a valid block amount.', 'system'); return; }
+
+  if(state.demoMode){
+    // Simulate the whole flow locally so the UI is demoable without a backend running.
+    state.mandate = {
+      mandate_id: 'demo_mandate_' + Date.now(),
+      status: 'AUTHORIZED',
+      max_amount: maxAmount, per_txn_cap: perTxnCap,
+      utilised: 0, available: maxAmount, ledger: [],
+    };
+    addMsg(`[DEMO MODE] Simulated Razorpay authorization for ₹${maxAmount}. In live mode this opens real Razorpay Checkout (test mode).`, 'system');
+    renderMandate();
+    return;
+  }
+
+  try{
+    const r = await fetch(apiBase() + '/api/mandate/create', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ session_id: sessionId, max_amount: maxAmount, per_txn_cap: perTxnCap, days_valid: 30 })
+    });
+    if(!r.ok){ const t = await r.text(); addMsg('Could not create mandate: ' + t, 'system'); return; }
+    const order = await r.json();
+
+    const options = {
+      key: order.razorpay_key_id,
+      amount: order.amount_paise,
+      currency: order.currency,
+      name: 'Agentic Checkout',
+      description: 'Authorize spending mandate (test mode)',
+      order_id: order.razorpay_order_id,
+      handler: async function(response){
+        const vr = await fetch(apiBase() + '/api/mandate/verify', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            session_id: sessionId,
+            mandate_id: order.mandate_id,
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+          })
+        });
+        const vj = await vr.json();
+        if(vr.ok){
+          state.mandate = vj.mandate;
+          addMsg('Mandate authorized. I can now check out on your behalf up to your limits.', 'system');
+        } else {
+          addMsg('Signature verification failed: ' + JSON.stringify(vj), 'system');
+        }
+        renderMandate();
+      },
+      theme: { color: '#5B7CFA' },
+    };
+    const rzp = new Razorpay(options);
+    rzp.open();
+  } catch(e){
+    addMsg('Error contacting backend: ' + e.message, 'system');
+  }
+});
+
+$('revokeBtn').addEventListener('click', async () => {
+  if(state.demoMode){ state.mandate = null; renderMandate(); return; }
+  await fetch(apiBase() + '/api/mandate/revoke', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ session_id: sessionId, mandate_id: state.mandate.mandate_id })
+  });
+  state.mandate = null;
+  renderMandate();
+});
+
+// ---------------- Chat send ----------------
+async function sendMessage(text){
+  if(!text.trim()) return;
+  addMsg(text, 'user');
+  $('msgInput').value = '';
+
+  if(state.demoMode){
+    return handleDemoChat(text);
+  }
+
+  try{
+    const r = await fetch(apiBase() + '/api/chat', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ session_id: sessionId, message: text })
+    });
+    const j = await r.json();
+    addMsg(j.reply, 'agent');
+    if(state.mandate){
+      const mr = await fetch(apiBase() + '/api/mandate/' + state.mandate.mandate_id);
+      if(mr.ok) state.mandate = await mr.json();
+    }
+    renderMandate();
+  }catch(e){
+    addMsg('Error contacting backend: ' + e.message, 'agent');
+  }
+}
+
+// ---------------- Minimal client-side mirror of the agent, for demo mode ----------------
+function handleDemoChat(text){
+  const t = text.toLowerCase();
+  if(t.includes('checkout') || t.includes('buy now') || t.includes('pay now')){
+    if(!state.cart.length){ addMsg('Your cart is empty, nothing to check out.', 'agent'); return; }
+    if(!state.mandate || state.mandate.status !== 'AUTHORIZED'){
+      addMsg("You haven't authorized a mandate yet. Set one up on the right first.", 'agent'); return;
+    }
+    const total = state.cart.reduce((s,i) => s + i.price, 0);
+    const m = state.mandate;
+    if(total > m.per_txn_cap){
+      m.ledger.push({id:'txn_demo', amount: total, reason:'Order: '+state.cart.map(i=>i.name).join(', '), status:'BLOCKED'});
+      addMsg(`I stopped this purchase: ₹${total} exceeds your per-transaction cap of ₹${m.per_txn_cap}.`, 'agent');
+    } else if(total > m.available){
+      m.ledger.push({id:'txn_demo', amount: total, reason:'Order: '+state.cart.map(i=>i.name).join(', '), status:'BLOCKED'});
+      addMsg(`I stopped this purchase: only ₹${m.available} left on your mandate.`, 'agent');
+    } else {
+      m.utilised += total; m.available -= total;
+      m.ledger.push({id:'txn_demo', amount: total, reason:'Order: '+state.cart.map(i=>i.name).join(', '), status:'SUCCESS'});
+      addMsg(`Done — debited ₹${total} against your mandate with zero taps.`, 'agent');
+      state.cart = [];
+    }
+    renderMandate();
+    return;
+  }
+  if(t.includes('cart')){
+    if(!state.cart.length){ addMsg('Your cart is empty.', 'agent'); return; }
+    addMsg('Your cart:\n' + state.cart.map(i => `- ${i.name} (${i.id}) — ₹${i.price}`).join('\n'), 'agent');
+    return;
+  }
+  const skuMatch = t.match(/sku_\d+/);
+  if(t.includes('add') && skuMatch){
+    const item = DEMO_CATALOG.find(i => i.id === skuMatch[0]);
+    if(item){ state.cart.push(item); addMsg(`Added ${item.name} (₹${item.price}) to your cart.`, 'agent'); }
+    else addMsg("I couldn't find that item id.", 'agent');
+    return;
+  }
+  // search fallback
+  const matches = DEMO_CATALOG.filter(i => t.split(' ').some(w => w.length > 2 && i.name.toLowerCase().includes(w)));
+  const results = matches.length ? matches : DEMO_CATALOG;
+  addMsg('Here\'s what I found:\n' + results.map(i => `- ${i.name} (${i.id}) — ₹${i.price}`).join('\n') + '\n\nSay "add <sku id>" to add one.', 'agent');
+}
+
+$('sendBtn').addEventListener('click', () => sendMessage($('msgInput').value));
+$('msgInput').addEventListener('keydown', (e) => { if(e.key === 'Enter') sendMessage($('msgInput').value); });
+document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => sendMessage(c.dataset.q)));
+$('apiBase').addEventListener('change', checkBackend);
+
+checkBackend();
+</script>
+</body>
+</html>
