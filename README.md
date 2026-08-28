@@ -50,6 +50,14 @@ deterministic code against the mandate's guardrails before anything is
 debited. This separation is what you should lead with when asked "how do
 you stop the agent from doing something dangerous."
 
+Checkout itself is split into two steps for the same reason: saying
+"checkout" in chat only produces a non-committing **preview** (item list,
+total, a live guardrail check) rendered as a "Confirm & Pay" card in the
+chat. Nothing is charged until the user explicitly taps that button, which
+calls a separate endpoint (`POST /api/checkout/confirm`) that is the only
+code path in the project allowed to call the mandate engine's debit
+function. The chat graph can propose a purchase; it can never execute one.
+
 ### Guardrails implemented in the mandate engine
 - **Idempotency keys** — an agent retry after a network timeout can't cause
   a double debit.

@@ -58,3 +58,39 @@ Python backend isn't running.
   runaway agent loops.
 - Real webhook handling (`payment.captured`, `refund.processed`) instead of
   only the synchronous verify path.
+
+### 6. Real bug from testing: LLM hallucinating currency
+Once Gemini was wired into `compose_reply`, it started quoting prices like
+"$8.99" for an item that costs Rs 899 -- it silently treated the plain
+rupee integer as if it were cents and switched to dollars, because the
+prompt never said not to. **Fix:** made the currency rule explicit and
+concrete in the system prompt ("every number is already rupees, write it
+as 'Rs <number>' exactly as given, never divide/multiply/add decimals/use
+a $ sign"), with a worked example.
+
+### 7. Real bug from testing: item names couldn't be added, only exact SKUs
+The agent required an exact `sku_001`-style id to add anything to cart --
+reasonable to prevent SKU hallucination, but "buy the usb c fast charger"
+silently failed and fell back to a generic search instead. **Fix:** added a
+deterministic (non-LLM) resolution step against the real catalog via
+`inventory.search`, scored by how many meaningful query words match.
+Found a second bug in the process: `inventory.search` did plain substring
+matching, so a short token like "c" (from "usb c charger") matched as a
+substring of "ele**c**tronics" and silently resolved to the wrong product.
+Fixed by requiring matched tokens to be at least 3 characters.
+
+### 8. UX gap: ambiguous "buy it" after multiple search results
+Shown two items and told "yes buy it," the agent had no way to know which
+one was meant. **Fix:** the backend tracks `last_shown_items` per session.
+If exactly one item was last shown, "buy it" resolves to it unambiguously;
+if several were shown, the agent asks which one instead of guessing.
+
+### 9. Checkout was one step; now it's two, on purpose
+Originally, saying "checkout" immediately called `mandate.store.debit()`.
+**Fix:** split into `node_checkout` (non-committing preview -- computes the
+total and previews the guardrail result without committing it) and
+`execute_checkout()` (the only function that can call `store.debit()`,
+reachable only via `POST /api/checkout/confirm`, which the frontend calls
+exclusively from an explicit "Confirm & Pay" button tap in the chat). The
+chat graph can propose a checkout; it can never execute one.
+

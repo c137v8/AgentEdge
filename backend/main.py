@@ -39,7 +39,7 @@ SESSIONS: Dict[str, Dict] = {}
 
 
 def _session(session_id: str) -> Dict:
-    return SESSIONS.setdefault(session_id, {"cart": [], "mandate_id": None})
+    return SESSIONS.setdefault(session_id, {"cart": [], "mandate_id": None, "last_shown_items": []})
 
 
 # ---------------------------------------------------------------------------
@@ -63,13 +63,42 @@ class ChatRequest(BaseModel):
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     session = _session(req.session_id)
-    result = agent_mod.run_agent(req.message, session["cart"], session["mandate_id"])
+    result = agent_mod.run_agent(
+        req.message, session["cart"], session["mandate_id"], session.get("last_shown_items", [])
+    )
     session["cart"] = result.get("cart", session["cart"])
+    session["last_shown_items"] = result.get("last_shown_items", session.get("last_shown_items", []))
     return {
         "reply": result.get("reply", ""),
         "cart": session["cart"],
         "cart_total": sum(i["price"] for i in session["cart"]),
         "action": result.get("action_result"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Checkout confirmation -- the ONLY endpoint that can actually spend money.
+# The chat endpoint above can only ever return a "confirm_checkout" PREVIEW
+# (see agent.node_checkout); nothing is charged until the user explicitly
+# hits the "Confirm & Pay" button in the frontend, which calls this.
+# ---------------------------------------------------------------------------
+
+class ConfirmCheckoutRequest(BaseModel):
+    session_id: str
+
+
+@app.post("/api/checkout/confirm")
+def confirm_checkout(req: ConfirmCheckoutRequest):
+    session = _session(req.session_id)
+    facts = agent_mod.execute_checkout(session["cart"], session["mandate_id"])
+    if facts.get("ok"):
+        session["cart"] = []
+    reply = agent_mod.compose_reply_from_facts(facts)
+    return {
+        "reply": reply,
+        "cart": session["cart"],
+        "cart_total": sum(i["price"] for i in session["cart"]),
+        "action": facts,
     }
 
 

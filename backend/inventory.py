@@ -25,8 +25,16 @@ def search(query: str, max_price: Optional[int] = None, category: Optional[str] 
     results = []
     for item in CATALOG:
         haystack = " ".join([item["name"].lower(), item["category"].lower(), *item["tags"]])
-        if q and q not in haystack and not any(word in haystack for word in q.split()):
-            continue
+        if q:
+            # Only match on tokens with real signal (len >= 3). Without this,
+            # a short word like "c" (from "usb c charger") matches as a
+            # substring of almost anything -- e.g. "c" is inside
+            # "electronics" -- and silently resolves to the wrong product.
+            # Found via testing: "buy the usb c fast charger" was resolving
+            # to earbuds instead of the charger because of this.
+            meaningful_tokens = [w for w in q.split() if len(w) >= 3]
+            if q not in haystack and not any(tok in haystack for tok in meaningful_tokens):
+                continue
         if max_price is not None and item["price"] > max_price:
             continue
         if category and item["category"].lower() != category.lower():

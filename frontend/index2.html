@@ -100,6 +100,37 @@
   .msg-row.agent .msg-body{padding-top:3px;}
   .msg-row.system .msg-body{color:var(--muted-2); font-size:12.5px; font-family:var(--mono); text-align:center; margin:0 auto;}
 
+  /* ---- Thinking / loading animation ---- */
+  .msg-row.loading-row{animation:fadeIn .25s ease;}
+  @keyframes fadeIn{from{opacity:0; transform:translateY(3px);} to{opacity:1; transform:translateY(0);}}
+  .thinking{display:flex; align-items:center; gap:11px; min-height:28px;}
+  .thinking .orb-wrap{position:relative; width:22px; height:22px; flex-shrink:0;}
+  .thinking .orb-ring{
+    position:absolute; inset:0; border-radius:50%;
+    background:conic-gradient(from 0deg, var(--primary), var(--warn), var(--safe), var(--primary));
+    animation:orbSpin 1.6s linear infinite;
+    filter:drop-shadow(0 0 6px rgba(255,122,89,.45));
+  }
+  .thinking .orb-core{
+    position:absolute; inset:3px; border-radius:50%; background:var(--bg-main);
+  }
+  .thinking .dots{display:flex; align-items:center; gap:5px;}
+  .thinking .dots span{
+    width:6px; height:6px; border-radius:50%; background:var(--primary);
+    animation:dotBounce 1s ease-in-out infinite;
+  }
+  .thinking .dots span:nth-child(2){background:var(--warn); animation-delay:.15s;}
+  .thinking .dots span:nth-child(3){background:var(--safe); animation-delay:.3s;}
+  .thinking .label{
+    font-family:var(--mono); font-size:12.5px; color:var(--muted); letter-spacing:.01em;
+    transition:opacity .2s ease;
+  }
+  @keyframes orbSpin{to{transform:rotate(360deg);}}
+  @keyframes dotBounce{
+    0%, 60%, 100%{transform:translateY(0); opacity:.5;}
+    30%{transform:translateY(-5px); opacity:1;}
+  }
+
   .composer-wrap{padding:16px 24px 20px; flex-shrink:0;}
   .composer{max-width:720px; margin:0 auto; display:flex; align-items:flex-end; gap:8px; background:var(--bg-panel);
     border:1px solid var(--border); border-radius:20px; padding:8px 8px 8px 18px;}
@@ -110,23 +141,6 @@
     display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; transition:background .15s;}
   .send-btn:hover{background:var(--primary-hover);}
   .composer-hint{max-width:720px; margin:8px auto 0; text-align:center; font-size:11.5px; color:var(--muted-2);}
-
-  /* ---- Confirm & Pay card (rendered inline in chat) ---- */
-  .confirm-card{background:var(--bg-panel); border:1px solid var(--border); border-radius:14px; padding:16px 18px;
-    max-width:78%; margin-top:2px;}
-  .confirm-card .cc-title{font-size:13px; color:var(--muted); margin-bottom:8px; font-weight:500;}
-  .confirm-card .cc-items{font-size:14px; margin-bottom:4px; line-height:1.5;}
-  .confirm-card .cc-total{display:flex; justify-content:space-between; align-items:baseline; margin:12px 0 14px;
-    padding-top:12px; border-top:1px solid var(--border-soft);}
-  .confirm-card .cc-total .cc-total-label{font-size:13px; color:var(--muted);}
-  .confirm-card .cc-total .cc-total-amt{font-family:var(--mono); font-size:19px; font-weight:600;}
-  .confirm-card .cc-pay-btn{width:100%; background:var(--primary); color:#1A0E0A; border:none; padding:12px;
-    border-radius:10px; font-weight:600; font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;}
-  .confirm-card .cc-pay-btn:hover{background:var(--primary-hover);}
-  .confirm-card .cc-pay-btn:disabled{opacity:.5; cursor:not-allowed;}
-  .confirm-card .cc-note{font-size:11.5px; color:var(--muted-2); text-align:center; margin-top:9px;}
-  .confirm-card.blocked{border-color:var(--danger-dim);}
-  .confirm-card.blocked .cc-blocked-text{font-size:14px; color:var(--danger);}
 
   /* ---- Payments view ---- */
   .page-scroll{flex:1; overflow-y:auto;}
@@ -363,92 +377,50 @@ function addMsg(text, role){
   $('msgList').appendChild(row);
   $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
 }
+addMsg("Hi! I'm your shopping agent. Set up a spending mandate in Payments, then ask me to find and buy things — I won't need a PIN for each purchase.", 'agent');
 
-// Renders the "Confirm & Pay" card. Nothing is charged when this appears --
-// facts.type === "confirm_checkout" is always a non-committing PREVIEW from
-// the backend (see agent.node_checkout). The actual debit only happens if
-// the person taps the button, which calls /api/checkout/confirm.
-function addConfirmCard(facts){
+// ---------------- Thinking / loading animation ----------------
+const THINKING_PHRASES = [
+  "Thinking it through…",
+  "Looking that up…",
+  "Checking your cart…",
+  "Almost there…",
+];
+let thinkingInterval = null;
+
+function addLoadingMsg(){
   ensureChatStarted();
   const row = document.createElement('div');
-  row.className = 'msg-row agent';
-
-  if(!facts.ok){
-    row.innerHTML = `
-      <div class="avatar"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9.5 15a3.5 3.5 0 0 0 5 0"/></svg></div>
-      <div class="confirm-card blocked">
-        <div class="cc-blocked-text">Can't check out yet: ${facts.reason || 'unknown reason'}</div>
-      </div>`;
-    $('msgList').appendChild(row);
-    $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
-    return;
-  }
-
-  const itemsText = (facts.items || []).join(', ');
+  row.className = 'msg-row agent loading-row';
+  row.id = 'loadingRow';
   row.innerHTML = `
     <div class="avatar"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9.5 15a3.5 3.5 0 0 0 5 0"/></svg></div>
-    <div class="confirm-card">
-      <div class="cc-title">Ready to check out</div>
-      <div class="cc-items">${itemsText}</div>
-      <div class="cc-total"><span class="cc-total-label">Total</span><span class="cc-total-amt">${money(facts.amount)}</span></div>
-      <button class="cc-pay-btn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M2 12h2m16 0h2M12 2v2m0 16v2"/></svg>
-        Confirm & Pay ${money(facts.amount)}
-      </button>
-      <div class="cc-note">No PIN needed — within your pre-authorized mandate</div>
+    <div class="msg-body">
+      <div class="thinking">
+        <div class="orb-wrap"><div class="orb-ring"></div><div class="orb-core"></div></div>
+        <div class="dots"><span></span><span></span><span></span></div>
+        <div class="label" id="thinkingLabel">${THINKING_PHRASES[0]}</div>
+      </div>
     </div>`;
-  const btn = row.querySelector('.cc-pay-btn');
-  btn.addEventListener('click', () => confirmPayment(btn));
   $('msgList').appendChild(row);
   $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+
+  let i = 0;
+  thinkingInterval = setInterval(() => {
+    i = (i + 1) % THINKING_PHRASES.length;
+    const label = document.getElementById('thinkingLabel');
+    if(label){
+      label.style.opacity = 0;
+      setTimeout(() => { label.textContent = THINKING_PHRASES[i]; label.style.opacity = 1; }, 200);
+    }
+  }, 1500);
 }
 
-async function confirmPayment(btn){
-  btn.disabled = true;
-  btn.textContent = 'Processing…';
-
-  if(state.demoMode){
-    const m = state.mandate;
-    const cart = state.cart.slice();
-    const total = cart.reduce((s,i) => s + i.price, 0);
-    if(!m || m.status !== 'AUTHORIZED'){
-      addMsg("Your mandate isn't active anymore.", 'agent');
-    } else if(total > m.per_txn_cap){
-      m.ledger.push({id:'txn_demo', amount: total, reason:'Order: '+cart.map(i=>i.name).join(', '), status:'BLOCKED'});
-      addMsg(`I stopped this purchase: ${money(total)} exceeds your per-purchase cap of ${money(m.per_txn_cap)}.`, 'agent');
-    } else if(total > m.available){
-      m.ledger.push({id:'txn_demo', amount: total, reason:'Order: '+cart.map(i=>i.name).join(', '), status:'BLOCKED'});
-      addMsg(`I stopped this purchase: only ${money(m.available)} left on your mandate.`, 'agent');
-    } else {
-      m.utilised += total; m.available -= total;
-      m.ledger.push({id:'txn_demo', amount: total, reason:'Order: '+cart.map(i=>i.name).join(', '), status:'SUCCESS'});
-      addMsg(`Done — charged ${money(total)} against your mandate with zero further taps.`, 'agent');
-      state.cart = [];
-    }
-    renderMandate();
-    return;
-  }
-
-  try{
-    const r = await fetch(apiBase() + '/api/checkout/confirm', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ session_id: sessionId })
-    });
-    const j = await r.json();
-    addMsg(j.reply, 'agent');
-    state.cart = j.cart || [];
-    if(state.mandate){
-      const mr = await fetch(apiBase() + '/api/mandate/' + state.mandate.mandate_id);
-      if(mr.ok) state.mandate = await mr.json();
-    }
-    renderMandate();
-  }catch(e){
-    addMsg('Error contacting backend: ' + e.message, 'agent');
-    btn.disabled = false;
-    btn.textContent = 'Try again';
-  }
+function removeLoadingMsg(){
+  if(thinkingInterval){ clearInterval(thinkingInterval); thinkingInterval = null; }
+  const row = document.getElementById('loadingRow');
+  if(row) row.remove();
 }
-addMsg("Hi! I'm your shopping agent. Set up a spending mandate in Payments, then ask me to find and buy things — I won't need a PIN for each purchase.", 'agent');
 
 // ---------------- Health check / mode ----------------
 async function checkBackend(){
@@ -666,27 +638,31 @@ async function sendMessage(text){
   $('msgInput').value = '';
 
   if(state.demoMode){
-    return handleDemoChat(text);
+    addLoadingMsg();
+    setTimeout(() => {
+      removeLoadingMsg();
+      handleDemoChat(text);
+    }, 700 + Math.random() * 500);
+    return;
   }
 
+  addLoadingMsg();
   try{
     const r = await fetch(apiBase() + '/api/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ session_id: sessionId, message: text })
     });
     const j = await r.json();
+    removeLoadingMsg();
+    addMsg(j.reply, 'agent');
     state.cart = j.cart || [];
-    if(j.action && j.action.type === 'confirm_checkout'){
-      addConfirmCard(j.action);
-    } else {
-      addMsg(j.reply, 'agent');
-    }
     if(state.mandate){
       const mr = await fetch(apiBase() + '/api/mandate/' + state.mandate.mandate_id);
       if(mr.ok) state.mandate = await mr.json();
     }
     renderMandate();
   }catch(e){
+    removeLoadingMsg();
     addMsg('Error contacting backend: ' + e.message, 'agent');
   }
 }
@@ -694,22 +670,26 @@ async function sendMessage(text){
 // ---------------- Minimal client-side mirror of the agent, for demo mode ----------------
 function handleDemoChat(text){
   const t = text.toLowerCase();
-  if(t.includes('checkout') || t.includes('buy now') || t.includes('buy it') || t.includes('pay now')){
+  if(t.includes('checkout') || t.includes('buy now') || t.includes('pay now')){
     if(!state.cart.length){ addMsg('Your cart is empty, nothing to check out.', 'agent'); return; }
     if(!state.mandate || state.mandate.status !== 'AUTHORIZED'){
       addMsg("You haven't authorized a mandate yet. Set one up in Payments first.", 'agent'); return;
     }
     const total = state.cart.reduce((s,i) => s + i.price, 0);
     const m = state.mandate;
-    // Preview only, same as live mode -- nothing is charged until the
-    // Confirm & Pay button (rendered by addConfirmCard) is actually clicked.
     if(total > m.per_txn_cap){
-      addConfirmCard({ ok: false, reason: `this exceeds your per-purchase cap of ${money(m.per_txn_cap)}` });
+      m.ledger.push({id:'txn_demo', amount: total, reason:'Order: '+state.cart.map(i=>i.name).join(', '), status:'BLOCKED'});
+      addMsg(`I stopped this purchase: ${money(total)} exceeds your per-purchase cap of ${money(m.per_txn_cap)}.`, 'agent');
     } else if(total > m.available){
-      addConfirmCard({ ok: false, reason: `only ${money(m.available)} is left on your mandate` });
+      m.ledger.push({id:'txn_demo', amount: total, reason:'Order: '+state.cart.map(i=>i.name).join(', '), status:'BLOCKED'});
+      addMsg(`I stopped this purchase: only ${money(m.available)} left on your mandate.`, 'agent');
     } else {
-      addConfirmCard({ ok: true, items: state.cart.map(i => i.name), amount: total });
+      m.utilised += total; m.available -= total;
+      m.ledger.push({id:'txn_demo', amount: total, reason:'Order: '+state.cart.map(i=>i.name).join(', '), status:'SUCCESS'});
+      addMsg(`Done — debited ${money(total)} against your mandate with zero taps.`, 'agent');
+      state.cart = [];
     }
+    renderMandate();
     return;
   }
   if(t.includes('view cart') || t === 'cart'){
@@ -725,22 +705,11 @@ function handleDemoChat(text){
     renderMandate();
     return;
   }
-  if(t.includes('add') || t.includes('buy') || t.includes('get me') || t.includes('i want')){
-    const skuMatch = t.match(/sku_\d+/);
-    let item = skuMatch ? DEMO_CATALOG.find(i => i.id === skuMatch[0]) : null;
-    if(!item){
-      // deterministic name match, mirroring the backend's inventory.search
-      // logic (min token length 3 to avoid short-token false positives)
-      const tokens = t.replace(/sku_\d+/g,'').split(/\s+/).filter(w => w.length >= 3 &&
-        !['buy','add','get','me','the','for','yes','please','that','this','one','item','now','cart','want'].includes(w));
-      const scored = DEMO_CATALOG.map(p => {
-        const hay = p.name.toLowerCase();
-        return { p, score: tokens.filter(tok => hay.includes(tok)).length };
-      }).filter(s => s.score > 0).sort((a,b) => b.score - a.score);
-      item = scored.length ? scored[0].p : null;
-    }
+  const skuMatch = t.match(/sku_\d+/);
+  if(t.includes('add') && skuMatch){
+    const item = DEMO_CATALOG.find(i => i.id === skuMatch[0]);
     if(item){ state.cart.push(item); addMsg(`Added ${item.name} (${money(item.price)}) to your cart.`, 'agent'); }
-    else addMsg("I couldn't find that item. Try naming it more specifically or searching first.", 'agent');
+    else addMsg("I couldn't find that item id.", 'agent');
     renderMandate();
     return;
   }
