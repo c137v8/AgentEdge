@@ -16,6 +16,8 @@ student project on a deadline. So this project is honest about the split:
 | Order creation, Razorpay Checkout.js, HMAC signature verification | **Real** — genuine Razorpay Test Mode API calls (`backend/razorpay_client.py`) |
 | Initial "block funds" authorization | **Real** Razorpay test-mode payment, via Checkout.js |
 | Multiple zero-click debits against the blocked amount | **Simulated** in `backend/mandate.py`, using the same state machine (`INITIALIZED → AUTHORIZED → charge`) and guardrails a real SBMD integration needs |
+| Checkout **execution/transaction layer** | **Real protocol shape** — implements the [Agentic Commerce Protocol](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol) checkout-session lifecycle (`backend/acp.py`), exposed as real `POST /checkout_sessions` REST routes in `main.py`. Payment itself is **not** delegated to Stripe's Shared Payment Token network (that requires a real onboarded merchant) — it uses ACP's "seller-backed payment handler" pattern, backed by our own `mandate.py` engine |
+| Merchant identity (business name, MCC, support contact) | **Simulated** — fictional storefront details in `backend/merchant.py`, used to make ACP responses look like they came from a real registered business |
 | Product catalog | Mocked, in-memory |
 
 This split is deliberate and is the most defensible way to present this in
@@ -52,11 +54,40 @@ you stop the agent from doing something dangerous."
 
 Checkout itself is split into two steps for the same reason: saying
 "checkout" in chat only produces a non-committing **preview** (item list,
-total, a live guardrail check) rendered as a "Confirm & Pay" card in the
-chat. Nothing is charged until the user explicitly taps that button, which
-calls a separate endpoint (`POST /api/checkout/confirm`) that is the only
-code path in the project allowed to call the mandate engine's debit
-function. The chat graph can propose a purchase; it can never execute one.
+total, a live guardrail check) rendered as an actual **"Confirm & Pay" card
+in the chat UI** (not just text). Nothing is charged until the user
+explicitly taps that button, which calls a separate endpoint
+(`POST /api/checkout/confirm`) that is the only code path in the project
+allowed to reach the mandate engine's debit function. The chat graph can
+propose a purchase; it can never execute one. While the agent is generating
+a reply (or the demo-mode stand-in is "thinking"), the chat shows a small
+animated typing indicator instead of appearing to hang.
+
+### Agentic Commerce Protocol (ACP)
+
+Execution — the actual "move money" step — goes through the
+[Agentic Commerce Protocol](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol),
+the open standard co-developed by OpenAI and Stripe for how an agent, buyer,
+and merchant complete a purchase. `backend/acp.py` implements the ACP
+**checkout-session** resource and its lifecycle, and `main.py` exposes it as
+real REST routes:
+
+```
+POST /checkout_sessions                    create a session from cart items
+POST /checkout_sessions/{id}                update buyer / fulfillment address
+GET  /checkout_sessions/{id}                retrieve current session state
+POST /checkout_sessions/{id}/complete       pay -> creates an order (only entry point to mandate.store.debit())
+POST /checkout_sessions/{id}/cancel         cancel a session
+```
+
+Both the chat-driven "Confirm & Pay" button (`agent.execute_checkout`) and
+any external ACP-speaking agent go through the exact same
+`acp.complete_session()` call — there's no separate, less-guarded path for
+the in-app chat. This merchant (see `backend/merchant.py` for the dummy
+business profile) declares a single accepted payment handler,
+`reserve_pay_mandate`, a "seller-backed payment handler" (a pattern ACP
+explicitly supports) backed by the Reserve Pay mandate engine above, rather
+than a real Stripe Shared Payment Token integration.
 
 ### Guardrails implemented in the mandate engine
 - **Idempotency keys** — an agent retry after a network timeout can't cause
@@ -77,15 +108,18 @@ function. The chat graph can propose a purchase; it can never execute one.
 ```
 agentic-checkout/
   backend/
-    main.py              FastAPI app — chat, mandate, product endpoints
+    main.py              FastAPI app — chat, mandate, ACP, product endpoints
     agent.py             LangGraph state graph (search/cart/checkout nodes)
+    acp.py               Agentic Commerce Protocol checkout-session engine
+    merchant.py           Dummy merchant profile used by ACP responses
     mandate.py           Guardrailed mandate + ledger engine
     razorpay_client.py   Real Razorpay Orders API + signature verification
     inventory.py         Mock product catalog
     requirements.txt
     .env.example
   frontend/
-    index.html           Single-file UI: chat + reserve meter + ledger
+    index.html           Single-file UI: chat (with Confirm & Pay card +
+                          thinking indicator) + reserve meter + ledger
   README.md
   CHALLENGES.md          Interview prep: what broke, how it was fixed
 ```

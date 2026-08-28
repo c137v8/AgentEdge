@@ -15,13 +15,15 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import acp
 import agent as agent_mod
 import inventory
 import mandate as mandate_mod
+import merchant as merchant_mod
 import razorpay_client
 
 app = FastAPI(title="Agentic Checkout API")
@@ -32,6 +34,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_acp_version_header(request: Request, call_next):
+    """Every ACP response carries the spec version this merchant implements."""
+    response = await call_next(request)
+    if request.url.path.startswith("/checkout_sessions"):
+        response.headers["API-Version"] = acp.API_VERSION
+    return response
 
 # Naive per-session cart store, keyed by a session id the frontend generates.
 # Swap for Redis in a real deployment.
@@ -220,3 +231,138 @@ def revoke_mandate(req: RevokeRequest):
 @app.get("/api/health")
 def health():
     return {"ok": True, "razorpay_configured": bool(razorpay_client.RAZORPAY_KEY_ID)}
+
+
+@app.get("/api/merchant")
+def get_merchant():
+    """Dummy merchant profile the frontend can display alongside the Confirm & Pay card."""
+    return merchant_mod.MERCHANT
+
+
+# ---------------------------------------------------------------------------
+# Agentic Commerce Protocol (ACP) -- checkout-session REST surface.
+#
+# These five routes are the real transactional/execution layer: an
+# ACP-speaking agent (this app's own agent.py, or in principle any other
+# ACP client) creates a session from cart items, optionally updates it,
+# and completes it with a payment_data token to actually move money.
+# Nothing here bypasses the mandate guardrails -- acp.complete_session()
+# is the only function that can call mandate.store.debit() (see acp.py).
+# ---------------------------------------------------------------------------
+
+class ACPLineItemIn(BaseModel):
+    id: str
+    quantity: int = 1
+
+
+class ACPBuyerIn(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+
+
+class ACPAddressIn(BaseModel):
+    name: Optional[str] = None
+    line_one: Optional[str] = None
+    line_two: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    postal_code: Optional[str] = None
+
+
+class CreateCheckoutSessionRequest(BaseModel):
+    items: List[ACPLineItemIn]
+    buyer: Optional[ACPBuyerIn] = None
+    fulfillment_address: Optional[ACPAddressIn] = None
+
+
+def _resolve_acp_items(items: List[ACPLineItemIn]) -> List[Dict]:
+    resolved: List[Dict] = []
+    for li in items:
+        product = inventory.get_by_id(li.id)
+        if not product:
+            raise HTTPException(
+                status_code=400,
+                detail=acp.ACPError("invalid_request", "item_not_found", f"No such item '{li.id}'.", param="$.items[].id").to_dict(),
+            )
+        resolved.extend([product] * max(1, li.quantity))
+    return resolved
+
+
+@app.post("/checkout_sessions")
+def acp_create_checkout_session(req: CreateCheckoutSessionRequest, idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
+    resolved_items = _resolve_acp_items(req.items)
+    try:
+        session = acp.create_session(
+            resolved_items,
+            buyer=req.buyer.dict(exclude_none=True) if req.buyer else None,
+            fulfillment_address=req.fulfillment_address.dict(exclude_none=True) if req.fulfillment_address else None,
+            idempotency_key=idempotency_key,
+        )
+    except acp.ACPError as e:
+        raise HTTPException(status_code=e.http_status, detail=e.to_dict())
+    return session.to_dict()
+
+
+class UpdateCheckoutSessionRequest(BaseModel):
+    buyer: Optional[ACPBuyerIn] = None
+    fulfillment_address: Optional[ACPAddressIn] = None
+
+
+@app.post("/checkout_sessions/{checkout_session_id}")
+def acp_update_checkout_session(checkout_session_id: str, req: UpdateCheckoutSessionRequest):
+    try:
+        session = acp.update_session(
+            checkout_session_id,
+            buyer=req.buyer.dict(exclude_none=True) if req.buyer else None,
+            fulfillment_address=req.fulfillment_address.dict(exclude_none=True) if req.fulfillment_address else None,
+        )
+    except acp.ACPError as e:
+        raise HTTPException(status_code=e.http_status, detail=e.to_dict())
+    return session.to_dict()
+
+
+@app.get("/checkout_sessions/{checkout_session_id}")
+def acp_get_checkout_session(checkout_session_id: str):
+    try:
+        session = acp.get_session(checkout_session_id)
+    except acp.ACPError as e:
+        raise HTTPException(status_code=e.http_status, detail=e.to_dict())
+    return session.to_dict()
+
+
+class ACPPaymentDataIn(BaseModel):
+    token: str
+    provider: str
+    billing_address: Optional[ACPAddressIn] = None
+
+
+class CompleteCheckoutSessionRequest(BaseModel):
+    buyer: Optional[ACPBuyerIn] = None
+    payment_data: ACPPaymentDataIn
+
+
+@app.post("/checkout_sessions/{checkout_session_id}/complete")
+def acp_complete_checkout_session(checkout_session_id: str, req: CompleteCheckoutSessionRequest,
+                                   idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
+    try:
+        session = acp.complete_session(
+            checkout_session_id,
+            payment_data=req.payment_data.dict(exclude_none=True),
+            buyer=req.buyer.dict(exclude_none=True) if req.buyer else None,
+            idempotency_key=idempotency_key,
+        )
+    except acp.ACPError as e:
+        raise HTTPException(status_code=e.http_status, detail=e.to_dict())
+    return session.to_dict()
+
+
+@app.post("/checkout_sessions/{checkout_session_id}/cancel")
+def acp_cancel_checkout_session(checkout_session_id: str):
+    try:
+        session = acp.cancel_session(checkout_session_id)
+    except acp.ACPError as e:
+        raise HTTPException(status_code=e.http_status, detail=e.to_dict())
+    return session.to_dict()

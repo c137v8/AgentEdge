@@ -102,3 +102,6 @@ htmlcov/
 .coverage
 .coverage.*
 .hypothesis/
+dont
+dont/
+dont/*

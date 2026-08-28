@@ -100,6 +100,40 @@
   .msg-row.agent .msg-body{padding-top:3px;}
   .msg-row.system .msg-body{color:var(--muted-2); font-size:12.5px; font-family:var(--mono); text-align:center; margin:0 auto;}
 
+  /* ---- Thinking / typing indicator ---- */
+  .thinking-dots{display:inline-flex; align-items:center; gap:4px; padding:6px 0;}
+  .thinking-dots span{width:6px; height:6px; border-radius:50%; background:var(--muted-2); display:inline-block;
+    animation:thinking-bounce 1.1s infinite ease-in-out both;}
+  .thinking-dots span:nth-child(1){animation-delay:-0.28s;}
+  .thinking-dots span:nth-child(2){animation-delay:-0.14s;}
+  .thinking-dots span:nth-child(3){animation-delay:0s;}
+  @keyframes thinking-bounce{
+    0%, 80%, 100%{transform:scale(0.6); opacity:.4;}
+    40%{transform:scale(1); opacity:1;}
+  }
+
+  /* ---- Confirm & Pay card (rendered in chat, before any debit happens) ---- */
+  .confirm-card{background:var(--bg-panel); border:1px solid var(--border); border-radius:12px; padding:16px 18px;
+    max-width:340px; margin-top:2px;}
+  .confirm-card .cc-label{font-family:var(--mono); font-size:10.5px; color:var(--muted-2); text-transform:uppercase;
+    letter-spacing:.04em; margin-bottom:8px;}
+  .confirm-card .cc-items{font-size:13.5px; color:var(--muted); line-height:1.6; margin-bottom:10px;}
+  .confirm-card .cc-total{display:flex; justify-content:space-between; align-items:baseline; font-weight:600;
+    font-size:16px; padding-top:10px; border-top:1px solid var(--border-soft); margin-bottom:14px;}
+  .confirm-card .cc-total .cc-amt{font-family:var(--mono); color:var(--text);}
+  .confirm-card .cc-merchant{font-size:11.5px; color:var(--muted-2); margin-bottom:14px;}
+  .confirm-card .cc-btn-row{display:flex; gap:8px;}
+  .confirm-card .cc-confirm{flex:1; background:var(--primary); color:#1A0E0A; border:none; padding:10px;
+    border-radius:9px; font-weight:600; font-size:13.5px; cursor:pointer; transition:background .15s;}
+  .confirm-card .cc-confirm:hover{background:var(--primary-hover);}
+  .confirm-card .cc-confirm:disabled{opacity:.5; cursor:not-allowed;}
+  .confirm-card .cc-cancel{background:transparent; border:1px solid var(--border); color:var(--muted);
+    padding:10px 14px; border-radius:9px; font-size:13.5px; cursor:pointer;}
+  .confirm-card .cc-cancel:hover{border-color:var(--muted-2); color:var(--text);}
+  .confirm-card .cc-cancel:disabled{opacity:.5; cursor:not-allowed;}
+  .confirm-card.cc-done{opacity:.6;}
+  .confirm-card .cc-status{font-size:12.5px; font-family:var(--mono); color:var(--muted); margin-top:2px;}
+
   .composer-wrap{padding:16px 24px 20px; flex-shrink:0;}
   .composer{max-width:720px; margin:0 auto; display:flex; align-items:flex-end; gap:8px; background:var(--bg-panel);
     border:1px solid var(--border); border-radius:20px; padding:8px 8px 8px 18px;}
@@ -298,7 +332,8 @@
 const $ = (id) => document.getElementById(id);
 const sessionId = 'sess_' + Math.random().toString(36).slice(2, 10);
 
-let state = { mandate: null, cart: [], demoMode: false };
+let state = { mandate: null, cart: [], demoMode: false, merchantName: null };
+const DEMO_MERCHANT_NAME = 'Nilgiri Basics'; // dummy merchant used by local demo mode too
 
 function apiBase(){ return $('apiBase').value.replace(/\/$/, ''); }
 function money(n){ return '₹' + Number(n).toFixed(0); }
@@ -348,6 +383,68 @@ function addMsg(text, role){
 }
 addMsg("Hi! I'm your shopping agent. Set up a spending mandate in Payments, then ask me to find and buy things — I won't need a PIN for each purchase.", 'agent');
 
+// ---------------- Thinking indicator (shown while the LLM/agent is generating a reply) ----------------
+function showThinking(){
+  ensureChatStarted();
+  const row = document.createElement('div');
+  row.className = 'msg-row agent';
+  row.id = 'thinkingRow';
+  row.innerHTML = `
+    <div class="avatar"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9.5 15a3.5 3.5 0 0 0 5 0"/></svg></div>
+    <div class="msg-body"><span class="thinking-dots"><span></span><span></span><span></span></span></div>`;
+  $('msgList').appendChild(row);
+  $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+}
+function hideThinking(){
+  const row = $('thinkingRow');
+  if(row) row.remove();
+}
+
+// ---------------- Confirm & Pay card -- nothing is charged until this button is tapped ----------------
+let confirmCardSeq = 0;
+function addConfirmCard(items, amount, merchantName, onConfirm){
+  ensureChatStarted();
+  const cardId = 'confirmCard' + (confirmCardSeq++);
+  const row = document.createElement('div');
+  row.className = 'msg-row agent';
+  row.innerHTML = `
+    <div class="avatar"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9.5 15a3.5 3.5 0 0 0 5 0"/></svg></div>
+    <div class="confirm-card" id="${cardId}">
+      <div class="cc-label">Review order</div>
+      <div class="cc-items">${items.map(n => '· ' + n).join('<br>')}</div>
+      <div class="cc-total"><span>Total</span><span class="cc-amt">${money(amount)}</span></div>
+      ${merchantName ? `<div class="cc-merchant">Sold by ${merchantName} · no PIN needed, within your mandate</div>` : ''}
+      <div class="cc-btn-row">
+        <button class="cc-cancel" data-role="cancel">Cancel</button>
+        <button class="cc-confirm" data-role="confirm">Confirm &amp; Pay ${money(amount)}</button>
+      </div>
+    </div>`;
+  $('msgList').appendChild(row);
+  $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+
+  const card = $(cardId);
+  const confirmBtn = card.querySelector('[data-role="confirm"]');
+  const cancelBtn = card.querySelector('[data-role="cancel"]');
+
+  cancelBtn.addEventListener('click', () => {
+    confirmBtn.disabled = true; cancelBtn.disabled = true;
+    card.classList.add('cc-done');
+    card.querySelector('.cc-btn-row').outerHTML = '<div class="cc-status">Cancelled — nothing was charged.</div>';
+  });
+
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true; cancelBtn.disabled = true;
+    confirmBtn.textContent = 'Processing…';
+    try{
+      await onConfirm();
+    } finally {
+      card.classList.add('cc-done');
+      const btnRow = card.querySelector('.cc-btn-row');
+      if(btnRow) btnRow.outerHTML = '<div class="cc-status">Payment step complete — see message below.</div>';
+    }
+  });
+}
+
 // ---------------- Health check / mode ----------------
 async function checkBackend(){
   try{
@@ -355,8 +452,13 @@ async function checkBackend(){
     const j = await r.json();
     state.demoMode = false;
     $('modeBadge').textContent = 'live backend' + (j.razorpay_configured ? ' · razorpay ok' : ' · no razorpay keys');
+    try{
+      const mr = await fetch(apiBase() + '/api/merchant', { signal: AbortSignal.timeout(2500) });
+      if(mr.ok){ const mj = await mr.json(); state.merchantName = mj.storefront_name || mj.business_name; }
+    }catch(e){ /* non-fatal -- card just omits the merchant line */ }
   } catch(e){
     state.demoMode = true;
+    state.merchantName = DEMO_MERCHANT_NAME;
     $('modeBadge').textContent = 'local demo mode';
   }
   loadProducts();
@@ -557,22 +659,16 @@ $('revokeBtn').addEventListener('click', async () => {
   renderMandate();
 });
 
-// ---------------- Chat send ----------------
-async function sendMessage(text){
-  if(!text.trim()) return;
-  addMsg(text, 'user');
-  $('msgInput').value = '';
-
-  if(state.demoMode){
-    return handleDemoChat(text);
-  }
-
+// ---------------- Checkout confirmation -- the only place a debit can actually happen ----------------
+async function confirmLiveCheckout(){
+  showThinking();
   try{
-    const r = await fetch(apiBase() + '/api/chat', {
+    const r = await fetch(apiBase() + '/api/checkout/confirm', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ session_id: sessionId, message: text })
+      body: JSON.stringify({ session_id: sessionId })
     });
     const j = await r.json();
+    hideThinking();
     addMsg(j.reply, 'agent');
     state.cart = j.cart || [];
     if(state.mandate){
@@ -581,11 +677,87 @@ async function sendMessage(text){
     }
     renderMandate();
   }catch(e){
+    hideThinking();
+    addMsg('Error contacting backend: ' + e.message, 'agent');
+  }
+}
+
+// ---------------- Chat send ----------------
+async function sendMessage(text){
+  if(!text.trim()) return;
+  addMsg(text, 'user');
+  $('msgInput').value = '';
+
+  if(state.demoMode){
+    showThinking();
+    // Small artificial delay so the thinking animation is visible even
+    // though local demo mode has no real LLM round-trip to wait on.
+    setTimeout(() => { hideThinking(); handleDemoChat(text); }, 450);
+    return;
+  }
+
+  showThinking();
+  try{
+    const r = await fetch(apiBase() + '/api/chat', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ session_id: sessionId, message: text })
+    });
+    const j = await r.json();
+    hideThinking();
+    addMsg(j.reply, 'agent');
+    state.cart = j.cart || [];
+
+    // Nothing is ever charged from this response alone -- if the agent
+    // proposed a checkout and the preflight guardrail check passed, show
+    // a Confirm & Pay card. The actual debit only happens if the user
+    // taps it, via confirmLiveCheckout() -> POST /api/checkout/confirm.
+    const action = j.action;
+    if(action && action.type === 'confirm_checkout' && action.ok){
+      addConfirmCard(action.items || [], action.amount, state.merchantName, confirmLiveCheckout);
+    }
+
+    if(state.mandate){
+      const mr = await fetch(apiBase() + '/api/mandate/' + state.mandate.mandate_id);
+      if(mr.ok) state.mandate = await mr.json();
+    }
+    renderMandate();
+  }catch(e){
+    hideThinking();
     addMsg('Error contacting backend: ' + e.message, 'agent');
   }
 }
 
 // ---------------- Minimal client-side mirror of the agent, for demo mode ----------------
+async function confirmDemoCheckout(){
+  showThinking();
+  await new Promise(res => setTimeout(res, 350)); // mirror the real network round-trip
+  hideThinking();
+
+  if(!state.cart.length){ addMsg('Your cart is empty, nothing to check out.', 'agent'); return; }
+  if(!state.mandate || state.mandate.status !== 'AUTHORIZED'){
+    addMsg("Your mandate is no longer active.", 'agent'); return;
+  }
+  // Re-validate against the mandate's CURRENT state, in case it changed
+  // between preview and this click -- same fail-closed guardrail the
+  // real mandate.py enforces at debit time, not just at preview time.
+  const total = state.cart.reduce((s,i) => s + i.price, 0);
+  const m = state.mandate;
+  const reason = 'Order: ' + state.cart.map(i=>i.name).join(', ');
+  if(total > m.per_txn_cap){
+    m.ledger.push({id:'txn_demo_' + Date.now(), amount: total, reason, status:'BLOCKED'});
+    addMsg(`I stopped this purchase: ${money(total)} exceeds your per-purchase cap of ${money(m.per_txn_cap)}.`, 'agent');
+  } else if(total > m.available){
+    m.ledger.push({id:'txn_demo_' + Date.now(), amount: total, reason, status:'BLOCKED'});
+    addMsg(`I stopped this purchase: only ${money(m.available)} left on your mandate.`, 'agent');
+  } else {
+    m.utilised += total; m.available -= total;
+    m.ledger.push({id:'txn_demo_' + Date.now(), amount: total, reason, status:'SUCCESS'});
+    addMsg(`Done — debited ${money(total)} against your mandate with zero further taps.`, 'agent');
+    state.cart = [];
+  }
+  renderMandate();
+}
+
 function handleDemoChat(text){
   const t = text.toLowerCase();
   if(t.includes('checkout') || t.includes('buy now') || t.includes('pay now')){
@@ -593,21 +765,21 @@ function handleDemoChat(text){
     if(!state.mandate || state.mandate.status !== 'AUTHORIZED'){
       addMsg("You haven't authorized a mandate yet. Set one up in Payments first.", 'agent'); return;
     }
+    // PREVIEW only, same as the live backend's node_checkout: run the
+    // guardrail check up front so we don't show Confirm & Pay for an
+    // order that's guaranteed to fail, but do NOT debit anything here.
     const total = state.cart.reduce((s,i) => s + i.price, 0);
     const m = state.mandate;
     if(total > m.per_txn_cap){
-      m.ledger.push({id:'txn_demo', amount: total, reason:'Order: '+state.cart.map(i=>i.name).join(', '), status:'BLOCKED'});
-      addMsg(`I stopped this purchase: ${money(total)} exceeds your per-purchase cap of ${money(m.per_txn_cap)}.`, 'agent');
-    } else if(total > m.available){
-      m.ledger.push({id:'txn_demo', amount: total, reason:'Order: '+state.cart.map(i=>i.name).join(', '), status:'BLOCKED'});
-      addMsg(`I stopped this purchase: only ${money(m.available)} left on your mandate.`, 'agent');
-    } else {
-      m.utilised += total; m.available -= total;
-      m.ledger.push({id:'txn_demo', amount: total, reason:'Order: '+state.cart.map(i=>i.name).join(', '), status:'SUCCESS'});
-      addMsg(`Done — debited ${money(total)} against your mandate with zero taps.`, 'agent');
-      state.cart = [];
+      addMsg(`I can't check out yet: ${money(total)} exceeds your per-purchase cap of ${money(m.per_txn_cap)}.`, 'agent');
+      return;
     }
-    renderMandate();
+    if(total > m.available){
+      addMsg(`I can't check out yet: only ${money(m.available)} is left on your mandate.`, 'agent');
+      return;
+    }
+    addMsg(`Ready to check out ${state.cart.map(i=>i.name).join(', ')} for ${money(total)}. Tap Confirm & Pay to complete it.`, 'agent');
+    addConfirmCard(state.cart.map(i => i.name), total, state.merchantName, () => confirmDemoCheckout());
     return;
   }
   if(t.includes('view cart') || t === 'cart'){

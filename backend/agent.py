@@ -47,8 +47,10 @@ from typing import Dict, List, Optional, TypedDict
 
 from langgraph.graph import StateGraph, END
 
+import acp
 import inventory
 import mandate as mandate_mod
+import merchant as merchant_mod
 
 logger = logging.getLogger("agent")
 
@@ -334,10 +336,20 @@ def node_checkout(state: AgentState) -> AgentState:
 
 def execute_checkout(cart: List[Dict], mandate_id: Optional[str]) -> Dict:
     """
-    The ONLY function in this codebase that calls mandate.store.debit().
-    Called exclusively from POST /api/checkout/confirm, i.e. only after an
+    The ONLY function in this codebase that can move money. Called
+    exclusively from POST /api/checkout/confirm, i.e. only after an
     explicit user click on the "Confirm & Pay" button -- never from the
     chat graph, never triggered by anything an LLM decided on its own.
+
+    Execution itself goes through the Agentic Commerce Protocol (ACP)
+    checkout-session lifecycle (see acp.py): a session is created from
+    the cart and immediately completed with a payment_data token pointing
+    at the user's Reserve Pay mandate. This is the same ACP surface
+    exposed externally as real REST routes in main.py (POST
+    /checkout_sessions, .../complete, etc.) -- the chat-driven confirm
+    button and an external ACP-speaking agent both end up going through
+    acp.complete_session(), which is the only function allowed to call
+    mandate.store.debit().
     """
     if not cart:
         return {"type": "checkout", "ok": False, "reason": "empty_cart"}
@@ -345,19 +357,21 @@ def execute_checkout(cart: List[Dict], mandate_id: Optional[str]) -> Dict:
         return {"type": "checkout", "ok": False, "reason": "no_mandate"}
 
     total = sum(i["price"] for i in cart)
-    idempotency_key = f"checkout_{uuid.uuid4().hex}"
     try:
-        entry = mandate_mod.store.debit(
-            mandate_id=mandate_id,
-            amount_rupees=total,
-            reason=f"Order: {', '.join(i['name'] for i in cart)}",
-            idempotency_key=idempotency_key,
+        session = acp.create_session(cart, mandate_id=mandate_id)
+        session = acp.complete_session(
+            session.id,
+            payment_data={"token": mandate_id, "provider": "reserve_pay_mandate"},
+            idempotency_key=f"checkout_{uuid.uuid4().hex}",
         )
         return {
-            "type": "checkout", "ok": True, "txn_id": entry.id, "amount": total,
+            "type": "checkout", "ok": True,
+            "txn_id": session.order["id"], "amount": total,
             "items": [i["name"] for i in cart],
+            "acp_checkout_session_id": session.id,
+            "merchant": merchant_mod.MERCHANT["storefront_name"],
         }
-    except mandate_mod.DebitError as e:
+    except acp.ACPError as e:
         return {"type": "checkout", "ok": False, "reason": e.code, "detail": e.message, "amount": total}
 
 
@@ -438,9 +452,10 @@ def _fallback_compose(facts: Dict) -> str:
         return f"I can't check out yet: {facts.get('reason')}."
     if t == "checkout":
         if facts.get("ok"):
+            merchant_bit = f" with {facts['merchant']}" if facts.get("merchant") else ""
             return (
-                f"Done — charged Rs {facts['amount']} against your mandate with zero further taps. "
-                f"Transaction id {facts['txn_id']}. No PIN prompt needed, it was within your pre-authorized limit."
+                f"Done — charged Rs {facts['amount']}{merchant_bit} against your mandate with zero further taps. "
+                f"Order {facts['txn_id']}. No PIN prompt needed, it was within your pre-authorized limit."
             )
         return _checkout_result_text(facts)
     return (
