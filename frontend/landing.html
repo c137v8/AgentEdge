@@ -101,6 +101,17 @@
     padding:5px 10px; border-radius:7px;}
   @media (max-width:760px){ .feature{grid-template-columns:1fr; gap:16px;} }
 
+  /* ---- Broken-flow comparison (problem section) ---- */
+  .flow-compare{display:flex; flex-direction:column; gap:14px; margin-top:26px;}
+  .flow-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:16px; border-radius:12px;}
+  .flow-bad{background:rgba(248,113,113,.06); border:1px solid rgba(248,113,113,.2);}
+  .flow-good{background:rgba(52,211,153,.06); border:1px solid rgba(52,211,153,.2);}
+  .flow-tag{font-family:var(--mono); font-size:12px; color:var(--muted); background:var(--bg-panel-2);
+    border:1px solid var(--border-soft); padding:7px 12px; border-radius:8px; white-space:nowrap;}
+  .flow-arrow{color:var(--muted-2); font-size:13px; flex-shrink:0;}
+  .flow-tag.flow-exit{color:#FCA5A5; border-color:rgba(248,113,113,.35); background:rgba(248,113,113,.08);}
+  .flow-tag.flow-win{color:#6EE7B7; border-color:rgba(52,211,153,.35); background:rgba(52,211,153,.08); font-weight:600;}
+
   /* ---- Demo CTA band ---- */
   .demo-band{max-width:1160px; margin:40px auto 100px; padding:60px 24px; border-top:1px solid var(--border-soft);
     text-align:center;}
@@ -120,10 +131,9 @@
 <nav class="nav">
   <div class="nav-brand"><span class="dot"></span> Agentic Checkout <span class="caret">⌄</span></div>
   <div class="nav-links">
-    <a href="#overview">Overview</a>
-    <a href="#agentic-commerce">AI Shopping</a>
-    <a href="#guardrails">Guardrails</a>
-    <a href="#acp">ACP</a>
+    <a href="#problem">The problem</a>
+    <a href="#act">Recommend vs. act</a>
+    <a href="#reserve-pay">UPI Reserve Pay</a>
     <a href="#security">Security</a>
   </div>
   <div class="nav-actions">
@@ -136,12 +146,12 @@
   <div class="hero">
     <div class="hero-glow"></div>
     <div class="hero-content">
-      <div class="hero-eyebrow">A new era of agentic payments</div>
+      <div class="hero-eyebrow">Most AI agents stop at a recommendation. This one doesn't.</div>
       <h1>Agentic<br>Checkout</h1>
-      <p class="tagline">An AI shopping agent that authorizes a spending mandate once — then searches, carts, and checks out on your behalf, with zero further PIN prompts. No UPI dialog. No repeated confirmations. Just a seamless conversation that ends in a finished order.</p>
+      <p class="tagline">Every "AI shopping assistant" today ends the conversation the same way: it finds you something, then sends you somewhere else to actually pay for it. This one doesn't hand you off. Authorize a spending limit once — the agent searches, carts, and checks out for real, without you ever leaving the chat.</p>
       <div class="hero-ctas">
         <a class="cta-primary" href="index.html">Launch the demo</a>
-        <a class="cta-outline" href="#overview">See how it works</a>
+        <a class="cta-outline" href="#problem">Why this matters</a>
       </div>
     </div>
   </div>
@@ -158,63 +168,70 @@
 </div>
 
 <div class="statement">
-  <h2>Every AI shopping demo today still stops at a <span class="hl">UPI prompt</span>.<br>
-  This one doesn't. Authorize once — <span class="hl">the agent takes it from there.</span></h2>
+  <h2>"Here's what I found — now go pay for it <span class="hl">somewhere else</span>."<br>
+  That's not agentic commerce. <span class="hl">That's a really good recommendation.</span></h2>
 </div>
 
 <div class="tabnav-wrap">
   <div class="tabnav">
-    <a href="#overview">Overview</a>
-    <a href="#agentic-commerce">AI Shopping</a>
-    <a href="#guardrails">Guardrails</a>
-    <a href="#acp">Protocol</a>
+    <a href="#problem">The problem</a>
+    <a href="#act">Recommend vs. act</a>
+    <a href="#reserve-pay">UPI Reserve Pay</a>
     <a href="#security">Security</a>
     <a href="#demo">Try it</a>
     <a class="tab-cta" href="index.html">Launch →</a>
   </div>
 </div>
 
-<section class="feature" id="overview">
-  <div class="feature-label">Overview</div>
+<section class="feature" id="problem">
+  <div class="feature-label">Commerce breaks the moment you have to pay</div>
   <div class="feature-body">
-    <p class="fb-highlight">Agentic commerce today mostly means an AI that fills a cart and then hands you back to a UPI PIN screen anyway — the friction it promised to remove is still there at the one moment that matters most.</p>
-    <p>Agentic Checkout removes that last mile. A user blocks a spending limit <em>once</em>, in a single real Razorpay authorization, with a hard per-transaction cap and an expiry. From that point on, the agent can search, add to cart, and check out entirely in natural language — no dialog boxes, no repeated authentication, no "approve this payment?" interruption per purchase.</p>
-    <p>It's the pattern behind Razorpay's own UPI Reserve Pay (Single Block, Multi Debit): block funds once, spend many times, safely.</p>
-    <div class="fb-tags">
-      <span class="fb-tag">LangGraph state machine</span>
-      <span class="fb-tag">Real Razorpay test-mode order + signature verification</span>
-      <span class="fb-tag">In-memory guardrail ledger</span>
+    <p class="fb-highlight">Ask an AI shopping assistant to buy something today, and here's what actually happens: it recommends a product, then the conversation ends and a completely different app begins.</p>
+    <p>You leave the chat. You open your banking or UPI app. You find the right contact or scan a code. You re-enter an amount the AI already knew. You authenticate. You come back — if you come back — hoping the AI still remembers what you were doing.</p>
+    <p>Every one of those steps is a place the sale dies. The AI didn't fail at understanding what you wanted; it failed at the one moment that actually matters — finishing the transaction.</p>
+    <div class="flow-compare">
+      <div class="flow-row flow-bad">
+        <span class="flow-tag">Chat with AI</span><span class="flow-arrow">→</span>
+        <span class="flow-tag">Get a recommendation</span><span class="flow-arrow">→</span>
+        <span class="flow-tag flow-exit">Leave the app</span><span class="flow-arrow">→</span>
+        <span class="flow-tag">Open UPI / banking app</span><span class="flow-arrow">→</span>
+        <span class="flow-tag">Re-enter details, authenticate</span><span class="flow-arrow">→</span>
+        <span class="flow-tag flow-exit">Hope you come back</span>
+      </div>
+      <div class="flow-row flow-good">
+        <span class="flow-tag">Chat with AI</span><span class="flow-arrow">→</span>
+        <span class="flow-tag">Get a recommendation</span><span class="flow-arrow">→</span>
+        <span class="flow-tag flow-win">Tap Confirm &amp; Pay — same chat</span><span class="flow-arrow">→</span>
+        <span class="flow-tag flow-win">Done</span>
+      </div>
     </div>
   </div>
 </section>
 
-<section class="feature" id="agentic-commerce">
-  <div class="feature-label">AI shopping, in plain language</div>
+<section class="feature" id="act">
+  <div class="feature-label">From recommending to acting</div>
   <div class="feature-body">
-    <p class="fb-highlight">"Show me earbuds under 3000." "Add the mechanical keyboard." "Checkout." That's the entire interface.</p>
-    <p>A LangGraph agent interprets intent, resolves it against a real product catalog, manages a live cart, and only ever proposes a purchase — it can never execute one unilaterally. Every checkout ends in an explicit, tap-to-confirm card in the chat itself, so the human is always the one who pulls the trigger, even though everything up to that point was zero-click.</p>
-    <p>Gemini handles the natural-language layer; a deterministic rule-based fallback keeps the app fully usable even with no LLM key configured at all.</p>
-  </div>
-</section>
-
-<section class="feature" id="guardrails">
-  <div class="feature-label">Guardrails that can't be talked around</div>
-  <div class="feature-body">
-    <p class="fb-highlight">An agent that can spend money needs limits an agent can't argue its way past.</p>
-    <p>Every mandate carries a hard block amount, a per-transaction cap, and an expiry, enforced by a single choke-point function that is the <em>only</em> code path in the entire project allowed to move money. Try to check out above the cap, and the agent refuses and explains why — not because a prompt told it to be careful, but because the guardrail is structural, not conversational.</p>
-    <p>Every attempt — successful, blocked, or refused — lands in an auditable ledger the user can see in real time.</p>
-  </div>
-</section>
-
-<section class="feature" id="acp">
-  <div class="feature-label">Speaks the Agentic Commerce Protocol</div>
-  <div class="feature-body">
-    <p class="fb-highlight">Execution goes through a real checkout-session lifecycle, not a bespoke one-off endpoint.</p>
-    <p>The transactional layer implements ACP — the open standard co-developed by OpenAI and Stripe for how an agent, a buyer, and a merchant complete a purchase — as real REST routes: create, update, retrieve, complete, and cancel a checkout session, with ACP's own error shape and versioning header. Whether the request comes from this app's own chat-driven "Confirm & Pay" button or an external ACP-speaking agent, it goes through the exact same execution path.</p>
+    <p class="fb-highlight">"Show me earbuds under 3000." "Add the mechanical keyboard." "Checkout." That's the entire interface — and unlike a typical shopping assistant, the last one doesn't just describe a checkout, it runs one.</p>
+    <p>Most AI agents are, structurally, recommendation engines wearing a chat UI: they can search and suggest, but the moment money needs to move, they stop and point you elsewhere. This project treats that as the actual problem to solve, not something to work around. The agent searches a real catalog, manages a live cart, and executes a real checkout-session lifecycle (built on the Agentic Commerce Protocol) — the same open standard OpenAI and Stripe use to let an agent, a buyer, and a merchant complete a purchase together.</p>
+    <p>The one thing it still won't do unilaterally: pull the trigger. Every checkout ends in an explicit "Confirm & Pay" card in the chat itself — everything up to that point is zero-click, but the human always makes the final call.</p>
     <div class="fb-tags">
-      <span class="fb-tag">POST /checkout_sessions</span>
-      <span class="fb-tag">.../complete</span>
-      <span class="fb-tag">Seller-backed payment handler</span>
+      <span class="fb-tag">LangGraph agent</span>
+      <span class="fb-tag">Real product catalog + live cart</span>
+      <span class="fb-tag">Agentic Commerce Protocol checkout-session</span>
+    </div>
+  </div>
+</section>
+
+<section class="feature" id="reserve-pay">
+  <div class="feature-label">The plan: UPI Reserve Pay</div>
+  <div class="feature-body">
+    <p class="fb-highlight">The mechanism this is built around: block a certain amount of money <em>once</em>, and let the agent charge against that block for every purchase after — no repeated UPI prompts, no re-authentication per order.</p>
+    <p>That's the pattern behind Razorpay's own UPI Reserve Pay (Single Block, Multi Debit) — a user authorizes one block with a hard ceiling, and the merchant can then debit against it multiple times, up to that ceiling, with no further customer action required. It's exactly the primitive an autonomous shopping agent needs: authorization happens once, up front, under the user's full attention; execution happens many times, silently, within limits the user already set.</p>
+    <p class="fb-highlight" style="margin-top:22px;">Honestly: SBMD isn't live in this build yet. Multi-debit activation requires Razorpay to enable it on a business account, which isn't self-serve. What <em>is</em> real today: the initial block is a genuine Razorpay test-mode order plus HMAC signature verification, and the repeated-debit lifecycle after that runs on a guardrail engine built to the same state machine (block → authorize → charge) so it's a drop-in swap once SBMD access is available — not a rewrite.</p>
+    <div class="fb-tags">
+      <span class="fb-tag">Real order creation + signature verification</span>
+      <span class="fb-tag">Per-transaction cap + expiry</span>
+      <span class="fb-tag">Simulated multi-debit, same state machine as SBMD</span>
     </div>
   </div>
 </section>

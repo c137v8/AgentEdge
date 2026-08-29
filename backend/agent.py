@@ -476,6 +476,7 @@ Hard rules:
   do not guess which one.
 - For search_results, list item names with prices; if items is empty, say nothing matched.
 - Keep it concise. No markdown headers, no emoji spam.
+- Never add your own sign-off, P.S., or "powered by" line -- that's appended separately.
 """
 
 
@@ -538,10 +539,22 @@ def compose_reply_from_facts(facts: Dict) -> str:
         try:
             reply = _call_gemini(COMPOSE_SYSTEM_PROMPT, json.dumps(facts), max_tokens=200)
             if reply:
-                return reply
+                return _with_checkout_signature(reply, facts)
         except Exception as e:
             logger.warning("Gemini compose_reply failed, falling back to templates: %s", e)
-    return _fallback_compose(facts)
+    return _with_checkout_signature(_fallback_compose(facts), facts)
+
+
+def _with_checkout_signature(reply: str, facts: Dict) -> str:
+    """
+    Appends a short P.S. after every SUCCESSFUL checkout. Done here in code
+    rather than left to the LLM's system prompt so it's always exactly this
+    line, worded identically, regardless of whether Gemini or the
+    rule-based fallback produced the rest of the reply.
+    """
+    if facts.get("type") == "checkout" and facts.get("ok"):
+        return f"{reply}\n\nP.S. — Powered by Agentic Checkout."
+    return reply
 
 
 def node_compose_reply(state: AgentState) -> AgentState:
