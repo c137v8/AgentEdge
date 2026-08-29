@@ -144,6 +144,24 @@ backend isn't reachable, it automatically falls back to **local demo
 mode** — a client-side mirror of the same guardrail logic — so the UI is
 still fully demoable with no setup.
 
+### API keys: `.env`, in-browser prompt, or skip entirely
+You don't have to have `.env` filled in to run this. On load, the
+frontend asks the backend what's configured (`GET /api/config/status`):
+- If the server already has `GEMINI_API_KEY` / `RAZORPAY_KEY_ID` +
+  `RAZORPAY_KEY_SECRET` in `.env`, nothing else happens.
+- If either is missing, a popup asks for that session's own keys instead
+  (`POST /api/config/keys`). Keys are held **only in server memory**, per
+  browser session, for the life of the process — never written to disk,
+  never logged, never echoed back in full in any response.
+- If you skip the popup (or leave a field blank), that session runs in
+  **test mode**: Gemini calls are simply never attempted (the existing
+  rule-based NLU / template replies take over, same as always), and
+  Razorpay calls use a fully local mock order + a test-only
+  authorization endpoint (`/api/mandate/authorize_test`) instead of real
+  Checkout.js — no network call, no real payment rail touched. A
+  diagonal **TEST MODE** ribbon stays pinned top-right for the whole
+  session as a reminder that nothing here is a real charge.
+
 ### 3. Try it
 1. Set a block amount (e.g. ₹5000) and per-transaction cap (e.g. ₹2000),
    click **Authorize with Razorpay (test)**.

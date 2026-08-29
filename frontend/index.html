@@ -134,6 +134,38 @@
   .confirm-card.cc-done{opacity:.6;}
   .confirm-card .cc-status{font-size:12.5px; font-family:var(--mono); color:var(--muted); margin-top:2px;}
 
+  /* ---- Test mode ribbon ---- */
+  .test-ribbon{position:fixed; top:14px; right:-46px; width:190px; padding:6px 0; text-align:center;
+    background:var(--warn); color:#241C05; font-family:var(--mono); font-size:11px; font-weight:700;
+    letter-spacing:.05em; transform:rotate(40deg); box-shadow:0 4px 14px rgba(0,0,0,.35); z-index:200;
+    pointer-events:none; user-select:none;}
+  .test-ribbon span{display:block;}
+
+  /* ---- API keys modal ---- */
+  .keys-modal-overlay{position:fixed; inset:0; background:rgba(0,0,0,.6); backdrop-filter:blur(2px);
+    display:flex; align-items:center; justify-content:center; z-index:300;}
+  .keys-modal{width:420px; max-width:calc(100vw - 40px); background:var(--bg-panel); border:1px solid var(--border);
+    border-radius:16px; padding:26px 26px 22px; box-shadow:0 20px 60px rgba(0,0,0,.5);}
+  .keys-modal h2{font-family:var(--disp); font-size:18px; margin:0 0 6px; color:var(--text);}
+  .keys-modal p.km-sub{font-size:13px; color:var(--muted); line-height:1.5; margin:0 0 18px;}
+  .km-field{margin-bottom:14px;}
+  .km-field label{display:block; font-family:var(--mono); font-size:10.5px; color:var(--muted-2);
+    text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px;}
+  .km-field input{width:100%; box-sizing:border-box; background:var(--bg-panel-2); border:1px solid var(--border);
+    color:var(--text); font-family:var(--mono); font-size:13px; padding:10px 12px; border-radius:9px;}
+  .km-field input:focus-visible{border-color:var(--primary);}
+  .km-security{display:flex; gap:8px; align-items:flex-start; background:var(--bg-panel-2); border:1px solid var(--border-soft);
+    border-radius:10px; padding:10px 12px; font-size:11.5px; color:var(--muted); line-height:1.5; margin-bottom:18px;}
+  .km-security svg{flex-shrink:0; margin-top:1px; color:var(--safe);}
+  .km-actions{display:flex; gap:8px;}
+  .km-skip{flex:1; background:transparent; border:1px solid var(--border); color:var(--muted); padding:11px;
+    border-radius:10px; font-size:13.5px; cursor:pointer;}
+  .km-skip:hover{border-color:var(--muted-2); color:var(--text);}
+  .km-save{flex:1.4; background:var(--primary); color:#1A0E0A; border:none; padding:11px; border-radius:10px;
+    font-weight:600; font-size:13.5px; cursor:pointer;}
+  .km-save:hover{background:var(--primary-hover);}
+  .km-skip-note{font-size:11px; color:var(--muted-2); text-align:center; margin-top:10px;}
+
   .composer-wrap{padding:16px 24px 20px; flex-shrink:0;}
   .composer{max-width:720px; margin:0 auto; display:flex; align-items:flex-end; gap:8px; background:var(--bg-panel);
     border:1px solid var(--border); border-radius:20px; padding:8px 8px 8px 18px;}
@@ -213,9 +245,40 @@
 </head>
 <body>
 
+<div class="test-ribbon" id="testRibbon" style="display:none;"><span>TEST MODE</span></div>
+
+<div class="keys-modal-overlay" id="keysModalOverlay" style="display:none;">
+  <div class="keys-modal">
+    <h2>Add your API keys</h2>
+    <p class="km-sub">No <code>.env</code> keys were found on the server. Paste your own to run this session live, or skip to use test mode (rule-based agent + simulated payments, no real API calls).</p>
+    <div class="km-field">
+      <label for="kmGemini">Gemini API key <span style="opacity:.6">(optional)</span></label>
+      <input id="kmGemini" type="password" placeholder="AIza…" autocomplete="off" />
+    </div>
+    <div class="km-field">
+      <label for="kmRzpId">Razorpay key id <span style="opacity:.6">(optional)</span></label>
+      <input id="kmRzpId" type="text" placeholder="rzp_test_…" autocomplete="off" />
+    </div>
+    <div class="km-field">
+      <label for="kmRzpSecret">Razorpay key secret <span style="opacity:.6">(optional)</span></label>
+      <input id="kmRzpSecret" type="password" placeholder="…" autocomplete="off" />
+    </div>
+    <div class="km-security">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 5v6c0 5.5 3.4 9.7 8 11 4.6-1.3 8-5.5 8-11V5z"/></svg>
+      Kept in server memory for this session only — never written to disk, never logged, never sent anywhere except the API you named. Cleared when the server restarts.
+    </div>
+    <div class="km-actions">
+      <button class="km-skip" id="kmSkipBtn">Skip — use test mode</button>
+      <button class="km-save" id="kmSaveBtn">Save &amp; continue</button>
+    </div>
+    <div class="km-skip-note">You can also save just one key and skip the other — whatever's missing falls back to test mode.</div>
+  </div>
+</div>
+
 <div class="app-shell">
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-brand"><span class="dot"></span> Agentic Checkout</div>
+    <a href="landing.html" style="display:block; font-size:11px; color:var(--muted-2); margin:-10px 0 14px 8px; font-family:var(--mono);">← back to overview</a>
     <button class="new-chat-btn" id="newChatBtn">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
       New chat
@@ -445,6 +508,62 @@ function addConfirmCard(items, amount, merchantName, onConfirm){
   });
 }
 
+// ---------------- API keys popup / test mode ribbon ----------------
+function updateTestRibbon(isTestMode){
+  $('testRibbon').style.display = isTestMode ? 'block' : 'none';
+}
+function showKeysModal(){ $('keysModalOverlay').style.display = 'flex'; }
+function hideKeysModal(){ $('keysModalOverlay').style.display = 'none'; }
+
+async function checkApiKeyConfig(){
+  try{
+    const r = await fetch(apiBase() + '/api/config/status?session_id=' + encodeURIComponent(sessionId), { signal: AbortSignal.timeout(2500) });
+    if(!r.ok) return;
+    const j = await r.json();
+    updateTestRibbon(j.test_mode);
+    const needsGemini = !j.gemini_env_configured && !j.gemini_session_configured;
+    const needsRazorpay = !j.razorpay_env_configured && !j.razorpay_session_configured;
+    // Only prompt if something is missing AND the session hasn't already
+    // resolved that (by saving keys, or by skipping into test mode earlier).
+    if((needsGemini || needsRazorpay) && !j.test_mode){
+      showKeysModal();
+    }
+  }catch(e){ /* non-fatal -- existing fallbacks keep the app usable either way */ }
+}
+
+$('kmSkipBtn').addEventListener('click', async () => {
+  try{
+    await fetch(apiBase() + '/api/config/keys', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ session_id: sessionId, skip: true })
+    });
+  }catch(e){ /* falls back to server-side defaults either way */ }
+  updateTestRibbon(true);
+  hideKeysModal();
+});
+
+$('kmSaveBtn').addEventListener('click', async () => {
+  const gemini = $('kmGemini').value.trim();
+  const rzpId = $('kmRzpId').value.trim();
+  const rzpSecret = $('kmRzpSecret').value.trim();
+  try{
+    const body = { session_id: sessionId };
+    if(gemini) body.gemini_api_key = gemini;
+    if(rzpId) body.razorpay_key_id = rzpId;
+    if(rzpSecret) body.razorpay_key_secret = rzpSecret;
+    const r = await fetch(apiBase() + '/api/config/keys', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const j = await r.json();
+    updateTestRibbon(j.test_mode);
+    $('kmGemini').value = ''; $('kmRzpId').value = ''; $('kmRzpSecret').value = '';
+  }catch(e){
+    addMsg('Could not save keys: ' + e.message, 'system');
+  }
+  hideKeysModal();
+});
+
 // ---------------- Health check / mode ----------------
 async function checkBackend(){
   try{
@@ -456,10 +575,14 @@ async function checkBackend(){
       const mr = await fetch(apiBase() + '/api/merchant', { signal: AbortSignal.timeout(2500) });
       if(mr.ok){ const mj = await mr.json(); state.merchantName = mj.storefront_name || mj.business_name; }
     }catch(e){ /* non-fatal -- card just omits the merchant line */ }
+    await checkApiKeyConfig();
   } catch(e){
     state.demoMode = true;
     state.merchantName = DEMO_MERCHANT_NAME;
     $('modeBadge').textContent = 'local demo mode';
+    // No backend reachable at all -- everything is already simulated
+    // client-side, so this is test mode by definition.
+    updateTestRibbon(true);
   }
   loadProducts();
 }
@@ -612,6 +735,26 @@ $('authBtn').addEventListener('click', async () => {
     });
     if(!r.ok){ const t = await r.text(); addMsg('Could not set up the mandate: ' + t, 'system'); return; }
     const order = await r.json();
+
+    // TEST MODE (no real Razorpay keys anywhere for this session): there's
+    // no real key to open Checkout.js with, so skip straight to the
+    // test-only authorization endpoint instead. No real payment rail is
+    // touched -- see razorpay_client.create_mock_order / /api/mandate/authorize_test.
+    if(order.test_mode){
+      const vr = await fetch(apiBase() + '/api/mandate/authorize_test', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ session_id: sessionId, mandate_id: order.mandate_id })
+      });
+      const vj = await vr.json();
+      if(vr.ok){
+        state.mandate = vj.mandate;
+        addMsg('[Test mode] Mandate authorized with a simulated payment — no real money moved. I can now check out on your behalf up to your limits.', 'system');
+      } else {
+        addMsg('Could not authorize the test mandate: ' + JSON.stringify(vj), 'system');
+      }
+      renderMandate();
+      return;
+    }
 
     const options = {
       key: order.razorpay_key_id,

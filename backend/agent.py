@@ -38,10 +38,12 @@ checkout button works, even though the *whole point* of the mandate is
 that no further PIN/OTP is needed once they do confirm.
 """
 from __future__ import annotations
+import contextvars
 import json
 import logging
 import os
 import re
+import time
 import uuid
 from typing import Dict, List, Optional, TypedDict
 
@@ -60,6 +62,57 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 # 2.0 was shut down in June 2026). gemini-2.5-flash is the current stable,
 # well-established choice as of Aug 2026.
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
+# Per-request Gemini key override, set by main.py when a session supplied
+# its own key via the "no .env keys -> ask in browser" popup. A ContextVar
+# (not a plain global) so concurrent requests from different sessions never
+# leak each other's keys -- it's request-scoped, propagates correctly
+# through FastAPI's threadpool, and always resets itself even on error.
+# When unset (the common case: server-side GEMINI_API_KEY from .env),
+# behavior is identical to before this existed.
+_gemini_key_ctx: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar(
+    "gemini_key_override", default=None
+)
+
+
+def _effective_gemini_key() -> str:
+    return _gemini_key_ctx.get() or GEMINI_API_KEY
+
+
+class gemini_key_override:
+    """
+    Context manager: `with agent.gemini_key_override(session_key): ...`
+    temporarily makes every _call_gemini() inside the block use
+    `session_key` instead of the server's GEMINI_API_KEY. Falls back to
+    GEMINI_API_KEY automatically if session_key is None/empty -- so it's
+    always safe to call unconditionally with whatever the session has on
+    file, even "nothing".
+    """
+
+    def __init__(self, key: Optional[str]):
+        self.key = key
+        self._token = None
+
+    def __enter__(self):
+        self._token = _gemini_key_ctx.set(self.key)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        _gemini_key_ctx.reset(self._token)
+        return False
+
+# Each chat message costs up to 2 Gemini calls (interpret + compose_reply),
+# so a 20/day free-tier key covers roughly 10 messages before every
+# request starts failing with 429 RESOURCE_EXHAUSTED. Once that happens,
+# retrying on every single message is pure waste: it adds a network
+# round-trip's worth of latency to a request that's guaranteed to fail,
+# and floods the logs. This cooldown makes _call_gemini fail FAST and
+# LOCAL once a 429 is seen, until Google's own suggested retryDelay (or a
+# 60s default if that's not present in the error) has elapsed -- at which
+# point it starts trying Gemini again automatically. No behavior change
+# otherwise; the existing rule_based/template fallbacks still fire either way.
+_gemini_cooldown_until = 0.0
+_RETRY_DELAY_RE = re.compile(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)")
 
 
 class AgentState(TypedDict, total=False):
@@ -126,17 +179,33 @@ def _rule_based_interpret(message: str) -> Dict:
 
 
 def _call_gemini(system: str, user_content: str, max_tokens: int = 300) -> str:
+    global _gemini_cooldown_until
+
+    remaining = _gemini_cooldown_until - time.time()
+    if remaining > 0:
+        raise RuntimeError(f"Gemini in rate-limit cooldown for {remaining:.0f}s more, skipping network call.")
+
     from google import genai
     from google.genai import types
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    resp = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=user_content,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            max_output_tokens=max_tokens,
-        ),
-    )
+    client = genai.Client(api_key=_effective_gemini_key())
+    try:
+        resp = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=user_content,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=max_tokens,
+            ),
+        )
+    except Exception as e:
+        msg = str(e)
+        if "RESOURCE_EXHAUSTED" in msg or " 429" in msg:
+            m = _RETRY_DELAY_RE.search(msg)
+            delay = float(m.group(1)) + 2 if m else 60.0  # +2s safety margin over Google's own suggested delay
+            _gemini_cooldown_until = time.time() + delay
+            logger.warning("Gemini rate-limited; pausing Gemini calls for %.0fs", delay)
+        raise
+
     text = (resp.text or "").strip()
     if not text:
         raise ValueError("Gemini returned an empty response")
@@ -152,7 +221,7 @@ def _gemini_interpret(message: str, cart: List[Dict]) -> Dict:
 def node_interpret(state: AgentState) -> AgentState:
     message = state["user_message"]
     cart = state.get("cart", [])
-    if GEMINI_API_KEY:
+    if _effective_gemini_key():
         try:
             parsed = _gemini_interpret(message, cart)
         except Exception as e:
@@ -465,7 +534,7 @@ def _fallback_compose(facts: Dict) -> str:
 
 
 def compose_reply_from_facts(facts: Dict) -> str:
-    if GEMINI_API_KEY:
+    if _effective_gemini_key():
         try:
             reply = _call_gemini(COMPOSE_SYSTEM_PROMPT, json.dumps(facts), max_tokens=200)
             if reply:

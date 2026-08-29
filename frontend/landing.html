@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic Checkout — Frictionless AI Commerce</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-main:#0E0E10; --bg-panel:#1C1C1E; --bg-panel-2:#232326; --bg-hero:#141416;
+    --border:#2C2C2E; --border-soft:#242426;
+    --text:#ECECEC; --muted:#9A9AA2; --muted-2:#6B6B72;
+    --primary:#FF7A59; --primary-hover:#FF8F72; --primary-dim:#3A2620; --primary-ink:#2A1712;
+    --safe:#34D399; --safe-dim:#12332A;
+    --warn:#FBBF24;
+    --disp:'Space Grotesk', sans-serif; --body:'Inter', sans-serif; --mono:'JetBrains Mono', monospace;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{margin:0; background:var(--bg-main); color:var(--text); font-family:var(--body); line-height:1.5;}
+  a{color:inherit; text-decoration:none;}
+  ::selection{background:var(--primary-dim); color:var(--primary-hover);}
+
+  /* ---- Nav ---- */
+  .nav{display:flex; align-items:center; justify-content:space-between; padding:18px 40px;
+    position:sticky; top:0; z-index:50; background:rgba(14,14,16,.85); backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--border-soft);}
+  .nav-brand{display:flex; align-items:center; gap:9px; font-family:var(--disp); font-weight:700; font-size:16px;}
+  .nav-brand .dot{width:9px; height:9px; border-radius:50%; background:var(--primary); box-shadow:0 0 10px var(--primary);}
+  .nav-brand .caret{color:var(--muted-2); font-size:11px; margin-left:2px;}
+  .nav-links{display:flex; gap:30px; font-size:14px; color:var(--muted);}
+  .nav-links a:hover{color:var(--text);}
+  .nav-actions{display:flex; gap:10px;}
+  .pill{padding:9px 18px; border-radius:999px; font-size:13.5px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:all .15s;}
+  .pill-outline{border:1px solid var(--border); color:var(--text); background:transparent;}
+  .pill-outline:hover{border-color:var(--muted-2);}
+  .pill-solid{background:var(--text); color:#141416; border:none;}
+  .pill-solid:hover{background:#fff;}
+  @media (max-width:860px){ .nav-links{display:none;} }
+
+  /* ---- Hero ---- */
+  .hero-wrap{padding:22px 22px 0;}
+  .hero{position:relative; overflow:hidden; border-radius:26px; background:var(--bg-hero);
+    min-height:640px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:60px 24px; text-align:center;}
+  .hero-glow{position:absolute; inset:0; z-index:0;
+    background:
+      radial-gradient(ellipse 700px 500px at 22% 20%, rgba(255,122,89,.55), transparent 60%),
+      radial-gradient(ellipse 600px 600px at 78% 75%, rgba(255,143,114,.35), transparent 60%),
+      radial-gradient(ellipse 900px 700px at 50% 100%, rgba(255,122,89,.18), transparent 65%);
+    filter:blur(10px);}
+  .hero-glow::after{content:''; position:absolute; inset:0;
+    background:repeating-radial-gradient(circle at 50% 45%, transparent 0, transparent 2px, rgba(255,255,255,.015) 3px);
+  }
+  .hero-content{position:relative; z-index:1; max-width:900px;}
+  .hero-eyebrow{font-family:var(--mono); font-size:12px; letter-spacing:.08em; text-transform:uppercase;
+    color:#FFC3AE; background:rgba(255,122,89,.12); border:1px solid rgba(255,122,89,.3);
+    display:inline-block; padding:6px 14px; border-radius:999px; margin-bottom:28px;}
+  .hero h1{font-family:var(--disp); font-weight:700; font-size:clamp(48px, 8vw, 96px); line-height:1.02;
+    margin:0 0 22px; letter-spacing:-.02em;}
+  .hero p.tagline{font-size:clamp(16px, 2vw, 21px); color:#D8D8DC; max-width:640px; margin:0 auto 40px; font-weight:400;}
+  .hero-ctas{display:flex; gap:12px; justify-content:center; flex-wrap:wrap;}
+  .cta-primary{background:#fff; color:#1A0E0A; border:none; padding:13px 26px; border-radius:999px;
+    font-weight:600; font-size:15px; cursor:pointer;}
+  .cta-primary:hover{background:#f0f0f0;}
+  .cta-outline{border:1px solid rgba(255,255,255,.3); color:#fff; background:rgba(255,255,255,.05);
+    padding:13px 26px; border-radius:999px; font-weight:600; font-size:15px; cursor:pointer;}
+  .cta-outline:hover{background:rgba(255,255,255,.12);}
+
+  .badges-row{display:flex; align-items:center; gap:10px; padding:26px 40px; overflow-x:auto;
+    border-bottom:1px solid var(--border-soft);}
+  .badges-label{font-size:13px; color:var(--muted-2); flex-shrink:0; margin-right:6px;}
+  .badge-chip{flex-shrink:0; font-family:var(--mono); font-size:12px; color:var(--muted); background:var(--bg-panel);
+    border:1px solid var(--border); padding:7px 14px; border-radius:999px; white-space:nowrap;}
+
+  /* ---- Big statement section ---- */
+  .statement{padding:110px 24px 70px; text-align:center;}
+  .statement h2{font-family:var(--disp); font-weight:600; font-size:clamp(28px, 4.4vw, 46px); line-height:1.2;
+    max-width:980px; margin:0 auto; letter-spacing:-.01em;}
+  .statement h2 .hl{color:var(--primary);}
+
+  /* ---- Tab pill nav ---- */
+  .tabnav-wrap{display:flex; justify-content:center; padding:44px 24px 100px;}
+  .tabnav{display:inline-flex; gap:4px; background:var(--bg-panel); border:1px solid var(--border);
+    border-radius:999px; padding:6px; flex-wrap:wrap; justify-content:center;}
+  .tabnav a{font-size:13.5px; color:var(--muted); padding:9px 18px; border-radius:999px; transition:all .15s; font-weight:500;}
+  .tabnav a:hover{color:var(--text); background:var(--bg-panel-2);}
+  .tabnav a.tab-cta{background:var(--primary); color:#1A0E0A; font-weight:700;}
+  .tabnav a.tab-cta:hover{background:var(--primary-hover);}
+
+  /* ---- Feature sections ---- */
+  .feature{max-width:1160px; margin:0 auto; padding:70px 24px; display:grid;
+    grid-template-columns:280px 1fr; gap:60px; border-top:1px solid var(--border-soft); scroll-margin-top:90px;}
+  .feature:first-of-type{border-top:none;}
+  .feature-label{font-family:var(--disp); font-size:26px; font-weight:600;}
+  .feature-body p{color:var(--muted); font-size:16px; max-width:640px; margin:0 0 14px;}
+  .feature-body .fb-highlight{color:var(--text);}
+  .fb-tags{display:flex; gap:8px; flex-wrap:wrap; margin-top:18px;}
+  .fb-tag{font-family:var(--mono); font-size:11.5px; color:var(--muted-2); border:1px solid var(--border-soft);
+    padding:5px 10px; border-radius:7px;}
+  @media (max-width:760px){ .feature{grid-template-columns:1fr; gap:16px;} }
+
+  /* ---- Demo CTA band ---- */
+  .demo-band{max-width:1160px; margin:40px auto 100px; padding:60px 24px; border-top:1px solid var(--border-soft);
+    text-align:center;}
+  .demo-band h3{font-family:var(--disp); font-size:30px; font-weight:600; margin:0 0 14px;}
+  .demo-band p{color:var(--muted); max-width:520px; margin:0 auto 30px; font-size:15.5px;}
+
+  /* ---- Footer ---- */
+  footer{border-top:1px solid var(--border-soft); padding:34px 40px; display:flex; align-items:center;
+    justify-content:space-between; flex-wrap:wrap; gap:14px; color:var(--muted-2); font-size:12.5px;}
+  footer .foot-brand{display:flex; align-items:center; gap:8px; font-family:var(--disp); font-weight:600; color:var(--muted);}
+  footer .foot-links{display:flex; gap:20px;}
+  footer a:hover{color:var(--text);}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-brand"><span class="dot"></span> Agentic Checkout <span class="caret">⌄</span></div>
+  <div class="nav-links">
+    <a href="#overview">Overview</a>
+    <a href="#agentic-commerce">AI Shopping</a>
+    <a href="#guardrails">Guardrails</a>
+    <a href="#acp">ACP</a>
+    <a href="#security">Security</a>
+  </div>
+  <div class="nav-actions">
+    <a class="pill pill-outline" href="../README.md">Read the docs</a>
+    <a class="pill pill-solid" href="index.html">★ Launch demo</a>
+  </div>
+</nav>
+
+<div class="hero-wrap">
+  <div class="hero">
+    <div class="hero-glow"></div>
+    <div class="hero-content">
+      <div class="hero-eyebrow">A new era of agentic payments</div>
+      <h1>Agentic<br>Checkout</h1>
+      <p class="tagline">An AI shopping agent that authorizes a spending mandate once — then searches, carts, and checks out on your behalf, with zero further PIN prompts. No UPI dialog. No repeated confirmations. Just a seamless conversation that ends in a finished order.</p>
+      <div class="hero-ctas">
+        <a class="cta-primary" href="index.html">Launch the demo</a>
+        <a class="cta-outline" href="#overview">See how it works</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="badges-row">
+  <span class="badges-label">Built on</span>
+  <span class="badge-chip">Agentic Commerce Protocol</span>
+  <span class="badge-chip">Razorpay Reserve Pay (SBMD)</span>
+  <span class="badge-chip">LangGraph agent</span>
+  <span class="badge-chip">Gemini 2.5 Flash</span>
+  <span class="badge-chip">Guardrailed mandate ledger</span>
+  <span class="badge-chip">Zero-UPI checkout</span>
+</div>
+
+<div class="statement">
+  <h2>Every AI shopping demo today still stops at a <span class="hl">UPI prompt</span>.<br>
+  This one doesn't. Authorize once — <span class="hl">the agent takes it from there.</span></h2>
+</div>
+
+<div class="tabnav-wrap">
+  <div class="tabnav">
+    <a href="#overview">Overview</a>
+    <a href="#agentic-commerce">AI Shopping</a>
+    <a href="#guardrails">Guardrails</a>
+    <a href="#acp">Protocol</a>
+    <a href="#security">Security</a>
+    <a href="#demo">Try it</a>
+    <a class="tab-cta" href="index.html">Launch →</a>
+  </div>
+</div>
+
+<section class="feature" id="overview">
+  <div class="feature-label">Overview</div>
+  <div class="feature-body">
+    <p class="fb-highlight">Agentic commerce today mostly means an AI that fills a cart and then hands you back to a UPI PIN screen anyway — the friction it promised to remove is still there at the one moment that matters most.</p>
+    <p>Agentic Checkout removes that last mile. A user blocks a spending limit <em>once</em>, in a single real Razorpay authorization, with a hard per-transaction cap and an expiry. From that point on, the agent can search, add to cart, and check out entirely in natural language — no dialog boxes, no repeated authentication, no "approve this payment?" interruption per purchase.</p>
+    <p>It's the pattern behind Razorpay's own UPI Reserve Pay (Single Block, Multi Debit): block funds once, spend many times, safely.</p>
+    <div class="fb-tags">
+      <span class="fb-tag">LangGraph state machine</span>
+      <span class="fb-tag">Real Razorpay test-mode order + signature verification</span>
+      <span class="fb-tag">In-memory guardrail ledger</span>
+    </div>
+  </div>
+</section>
+
+<section class="feature" id="agentic-commerce">
+  <div class="feature-label">AI shopping, in plain language</div>
+  <div class="feature-body">
+    <p class="fb-highlight">"Show me earbuds under 3000." "Add the mechanical keyboard." "Checkout." That's the entire interface.</p>
+    <p>A LangGraph agent interprets intent, resolves it against a real product catalog, manages a live cart, and only ever proposes a purchase — it can never execute one unilaterally. Every checkout ends in an explicit, tap-to-confirm card in the chat itself, so the human is always the one who pulls the trigger, even though everything up to that point was zero-click.</p>
+    <p>Gemini handles the natural-language layer; a deterministic rule-based fallback keeps the app fully usable even with no LLM key configured at all.</p>
+  </div>
+</section>
+
+<section class="feature" id="guardrails">
+  <div class="feature-label">Guardrails that can't be talked around</div>
+  <div class="feature-body">
+    <p class="fb-highlight">An agent that can spend money needs limits an agent can't argue its way past.</p>
+    <p>Every mandate carries a hard block amount, a per-transaction cap, and an expiry, enforced by a single choke-point function that is the <em>only</em> code path in the entire project allowed to move money. Try to check out above the cap, and the agent refuses and explains why — not because a prompt told it to be careful, but because the guardrail is structural, not conversational.</p>
+    <p>Every attempt — successful, blocked, or refused — lands in an auditable ledger the user can see in real time.</p>
+  </div>
+</section>
+
+<section class="feature" id="acp">
+  <div class="feature-label">Speaks the Agentic Commerce Protocol</div>
+  <div class="feature-body">
+    <p class="fb-highlight">Execution goes through a real checkout-session lifecycle, not a bespoke one-off endpoint.</p>
+    <p>The transactional layer implements ACP — the open standard co-developed by OpenAI and Stripe for how an agent, a buyer, and a merchant complete a purchase — as real REST routes: create, update, retrieve, complete, and cancel a checkout session, with ACP's own error shape and versioning header. Whether the request comes from this app's own chat-driven "Confirm & Pay" button or an external ACP-speaking agent, it goes through the exact same execution path.</p>
+    <div class="fb-tags">
+      <span class="fb-tag">POST /checkout_sessions</span>
+      <span class="fb-tag">.../complete</span>
+      <span class="fb-tag">Seller-backed payment handler</span>
+    </div>
+  </div>
+</section>
+
+<section class="feature" id="security">
+  <div class="feature-label">Secure by default, honest about the rest</div>
+  <div class="feature-body">
+    <p class="fb-highlight">No API keys checked in, no keys required to try it.</p>
+    <p>If the server has no <code>.env</code> keys, the app asks for them in the browser instead — held only in server memory for that session, never written to disk or logged. Skip the prompt entirely and the app drops into a fully local test mode: a rule-based agent, a simulated payment rail, and a persistent on-screen ribbon making it unmistakable that nothing being shown is a real charge.</p>
+    <p>The project is equally upfront about what's simulated elsewhere — see the README's "what's real vs. simulated" table. Nothing here is exaggerated to look further along than it is.</p>
+  </div>
+</section>
+
+<div class="demo-band" id="demo">
+  <h3>See it work in under a minute</h3>
+  <p>No signup, no real payment details required — test mode is one click away if you'd rather skip the API keys prompt entirely.</p>
+  <a class="cta-outline" href="index.html" style="color:var(--text); border-color:var(--border); background:var(--bg-panel);">Launch the demo →</a>
+</div>
+
+<footer>
+  <div class="foot-brand"><span style="width:7px;height:7px;border-radius:50%;background:var(--primary);display:inline-block;"></span> Agentic Checkout</div>
+  <div>Built as an exploration of agentic commerce infrastructure — for Razorpay's AI Internship, Agentic Commerce track.</div>
+  <div class="foot-links">
+    <a href="../README.md">README</a>
+    <a href="../CHALLENGES.md">Challenges &amp; fixes</a>
+    <a href="index.html">Launch app</a>
+  </div>
+</footer>
+
+</body>
+</html>
