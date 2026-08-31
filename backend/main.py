@@ -26,6 +26,8 @@ import inventory
 import mandate as mandate_mod
 import merchant as merchant_mod
 import razorpay_client
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="Agentic Checkout API")
 
@@ -506,4 +508,13 @@ def acp_cancel_checkout_session(checkout_session_id: str):
     return session.to_dict()
 # ... all your @app.get / @app.post routes ...
 
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+app.mount(
+    "/",
+    StaticFiles(
+        directory=BASE_DIR / "frontend",
+        html=True
+    ),
+    name="frontend"
+)
