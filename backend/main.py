@@ -2,6 +2,7 @@ import logging
 import os
 import uuid
 from typing import Dict, List, Optional
+from fastapi.staticfiles import StaticFiles
 
 # MUST run before importing agent/razorpay_client -- both read env vars
 # (GEMINI_API_KEY, RAZORPAY_KEY_ID, etc.) at module import time via
@@ -503,3 +504,6 @@ def acp_cancel_checkout_session(checkout_session_id: str):
     except acp.ACPError as e:
         raise HTTPException(status_code=e.http_status, detail=e.to_dict())
     return session.to_dict()
+# ... all your @app.get / @app.post routes ...
+
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
