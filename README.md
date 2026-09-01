@@ -1,6 +1,9 @@
 # Agentic Checkout
 ### Frictionless AI Commerce, modeled on Razorpay UPI Reserve Pay
 
+<img width="1859" height="632" alt="image" src="https://github.com/user-attachments/assets/5cd39de0-42af-4518-964a-c70acb06e282" />
+<img width="1919" height="944" alt="image" src="https://github.com/user-attachments/assets/d6f6e8da-087d-4cb1-9b71-8c41281c6453" />
+
 An AI shopping agent that authorizes a spending mandate **once**, then
 searches, carts, and checks out on the user's behalf entirely in chat —
 with **zero further PIN prompts, zero re-authentication, zero handoff to a
