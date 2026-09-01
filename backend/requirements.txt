@@ -1,4 +1,8 @@
-setuptools>=69.0.0  # razorpay SDK imports pkg_resources, no longer bundled by default in Python 3.13+
+# razorpay SDK imports pkg_resources; setuptools 82.0.0 (Feb 2026) removed pkg_resources
+# entirely, so an unbounded ">=69.0.0" now resolves to a version that breaks `import razorpay`.
+# Pinned below 82 until razorpay's SDK migrates off pkg_resources.
+# https://github.com/pypa/setuptools/issues/5174
+setuptools>=69.0.0,<82
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pydantic==2.9.2
