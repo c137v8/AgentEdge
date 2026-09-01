@@ -1,29 +1,79 @@
-# Agentic Checkout — Frictionless AI Commerce via UPI Reserve Pay
+# Agentic Checkout
+### Frictionless AI Commerce, powered by Razorpay UPI Reserve Pay
 
-An AI shopping agent that authorizes a spending mandate once, then searches,
-carts, and checks out on the user's behalf with **zero further PIN prompts**
-— built on the pattern behind Razorpay's UPI Reserve Pay (Single Block,
-Multi Debit / SBMD).
+An AI shopping agent that authorizes a spending mandate **once**, then
+searches, carts, and checks out on the user's behalf entirely in chat —
+with **zero further PIN prompts, zero re-authentication, zero handoff to a
+human**. Built on the pattern behind Razorpay's UPI Reserve Pay
+(Single Block, Multi Debit / SBMD).
+
+> **The idea in one line:** checkout shouldn't be the moment an AI shopping
+> experience hands back to a human. This project shows what it feels like
+> when it doesn't.
+
+---
+
+## Table of contents
+- [Why this exists](#why-this-exists)
+- [What's real vs. simulated](#whats-real-vs-simulated-read-this-first)
+- [Architecture](#architecture)
+- [Agentic Commerce Protocol (ACP)](#agentic-commerce-protocol-acp)
+- [Guardrails](#guardrails-in-the-mandate-engine)
+- [Project layout](#project-layout)
+- [Quickstart](#quickstart)
+- [Try it](#try-it)
+- [Tech stack](#tech-stack)
+- [Challenges & how they were solved](#challenges--how-they-were-solved)
+- [Why this fits the Agentic Commerce track](#why-this-fits-the-agentic-commerce-track)
+
+---
+
+## Why this exists
+
+Every extra step in checkout is a place a customer leaves. Conversational
+shopping agents today can recommend and cart just fine — but the moment it's
+time to actually pay, most of them still have to hand off to a human, because
+repeated authentication doesn't work inside a chat flow.
+
+Razorpay's UPI Reserve Pay removes that wall: block funds once with
+**Single Block, Multi Debit (SBMD)**, and an approved agent can debit
+against that block repeatedly, with no further authentication. That's the
+missing piece for agent-led commerce to close the loop — from *"I want
+this"* to *"paid"* — inside a single conversation.
+
+**Agentic Checkout** is a working demonstration of that loop, end to end,
+against Razorpay's real test-mode payment rails.
+
+```
+"show me earbuds under 3000"  →  agent searches, shows options
+"add sku_001 to cart"         →  agent carts it
+"checkout"                    →  agent renders a Confirm & Pay preview
+[tap Confirm & Pay]           →  paid. no PIN, no OTP, no redirect.
+"add sku_002, checkout"       →  repeat purchase, same conversation,
+                                  still zero further auth
+```
 
 ## What's real vs. simulated (read this first)
 
 Reserve Pay's multi-debit (SBMD) capability requires Razorpay to activate it
 on a **business account**, which isn't self-serve and isn't available to a
-student project on a deadline. So this project is honest about the split:
+student project on a deadline. So this project is upfront about the split —
+the parts that *can* be real, are:
 
 | Layer | Status |
 |---|---|
 | Order creation, Razorpay Checkout.js, HMAC signature verification | **Real** — genuine Razorpay Test Mode API calls (`backend/razorpay_client.py`) |
 | Initial "block funds" authorization | **Real** Razorpay test-mode payment, via Checkout.js |
 | Multiple zero-click debits against the blocked amount | **Simulated** in `backend/mandate.py`, using the same state machine (`INITIALIZED → AUTHORIZED → charge`) and guardrails a real SBMD integration needs |
-| Checkout **execution/transaction layer** | **Real protocol shape** — implements the [Agentic Commerce Protocol](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol) checkout-session lifecycle (`backend/acp.py`), exposed as real `POST /checkout_sessions` REST routes in `main.py`. Payment itself is **not** delegated to Stripe's Shared Payment Token network (that requires a real onboarded merchant) — it uses ACP's "seller-backed payment handler" pattern, backed by our own `mandate.py` engine |
-| Merchant identity (business name, MCC, support contact) | **Simulated** — fictional storefront details in `backend/merchant.py`, used to make ACP responses look like they came from a real registered business |
+| Checkout **execution/transaction layer** | **Real protocol shape** — implements the [Agentic Commerce Protocol](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol) checkout-session lifecycle (`backend/acp.py`), exposed as real `POST /checkout_sessions` REST routes in `main.py` |
+| Payment handler behind ACP | **Seller-backed payment handler** pattern (explicitly supported by ACP), backed by `mandate.py` — not Stripe's Shared Payment Token network, which requires a real onboarded merchant |
+| Merchant identity (business name, MCC, support contact) | **Simulated** — fictional storefront details in `backend/merchant.py` |
 | Product catalog | Mocked, in-memory |
 
-This split is deliberate and is the most defensible way to present this in
-an interview: the parts that *can* be real, are; the part that's gated
-behind business approval is clearly labeled as a simulation of the same
-lifecycle Razorpay's own docs describe.
+This is the most defensible way to present it in an interview: nothing here
+pretends to be more real than it is, and the part that's gated behind
+business approval is clearly labeled as a simulation of the exact lifecycle
+Razorpay's own docs describe.
 
 ## Architecture
 
@@ -36,9 +86,9 @@ lifecycle Razorpay's own docs describe.
                                │ (search / add_to_cart / checkout)
                                ▼
                     ┌─────────────────────┐
-                    │   Mandate Engine     │   ◀── this is the "AI Risk
-                    │  (backend/mandate.py)│       Manager" — deterministic,
-                    │  idempotency, caps,  │       not LLM-controlled
+                    │   Mandate Engine     │  deterministic, not
+                    │  (backend/mandate.py)│  LLM-controlled —
+                    │  idempotency, caps,  │  guardrails + ledger
                     │  expiry, ledger      │
                     └──────────┬───────────┘
                                │ only if all guardrails pass
@@ -47,21 +97,20 @@ lifecycle Razorpay's own docs describe.
 ```
 
 The core design decision: **the LLM never touches money directly.** It can
-only propose a checkout. Every proposal is re-validated in plain
+only *propose* a checkout. Every proposal is re-validated in plain,
 deterministic code against the mandate's guardrails before anything is
-debited. This separation is what you should lead with when asked "how do
-you stop the agent from doing something dangerous."
+debited — which is what makes "let the agent just handle it" something a
+business could realistically turn on.
 
-Checkout itself is split into two steps for the same reason: saying
-"checkout" in chat only produces a non-committing **preview** (item list,
-total, a live guardrail check) rendered as an actual **"Confirm & Pay" card
-in the chat UI** (not just text). Nothing is charged until the user
-explicitly taps that button, which calls a separate endpoint
-(`POST /api/checkout/confirm`) that is the only code path in the project
-allowed to reach the mandate engine's debit function. The chat graph can
-propose a purchase; it can never execute one. While the agent is generating
-a reply (or the demo-mode stand-in is "thinking"), the chat shows a small
-animated typing indicator instead of appearing to hang.
+Checkout is split into two steps for the same reason: saying "checkout" in
+chat only produces a non-committing **preview** — item list, total, a live
+guardrail check — rendered as an actual **"Confirm & Pay" card in the chat
+UI** (not just text). Nothing is charged until the user explicitly taps that
+button, which hits a separate endpoint (`POST /api/checkout/confirm`) — the
+only code path in the project allowed to reach the mandate engine's debit
+function. While the agent is generating a reply (or the demo-mode stand-in
+is "thinking"), the chat shows an animated typing indicator instead of
+appearing to hang.
 
 ### Agentic Commerce Protocol (ACP)
 
@@ -69,39 +118,35 @@ Execution — the actual "move money" step — goes through the
 [Agentic Commerce Protocol](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol),
 the open standard co-developed by OpenAI and Stripe for how an agent, buyer,
 and merchant complete a purchase. `backend/acp.py` implements the ACP
-**checkout-session** resource and its lifecycle, and `main.py` exposes it as
+**checkout-session** resource and its lifecycle, exposed by `main.py` as
 real REST routes:
 
-```
-POST /checkout_sessions                    create a session from cart items
-POST /checkout_sessions/{id}                update buyer / fulfillment address
-GET  /checkout_sessions/{id}                retrieve current session state
-POST /checkout_sessions/{id}/complete       pay -> creates an order (only entry point to mandate.store.debit())
-POST /checkout_sessions/{id}/cancel         cancel a session
-```
+| Route | Purpose |
+|---|---|
+| `POST /checkout_sessions` | Create a session from cart items |
+| `POST /checkout_sessions/{id}` | Update buyer / fulfillment address |
+| `GET /checkout_sessions/{id}` | Retrieve current session state |
+| `POST /checkout_sessions/{id}/complete` | Pay → creates an order (only entry point to `mandate.store.debit()`) |
+| `POST /checkout_sessions/{id}/cancel` | Cancel a session |
 
 Both the chat-driven "Confirm & Pay" button (`agent.execute_checkout`) and
-any external ACP-speaking agent go through the exact same
+any external ACP-speaking agent go through the **exact same**
 `acp.complete_session()` call — there's no separate, less-guarded path for
-the in-app chat. This merchant (see `backend/merchant.py` for the dummy
-business profile) declares a single accepted payment handler,
-`reserve_pay_mandate`, a "seller-backed payment handler" (a pattern ACP
-explicitly supports) backed by the Reserve Pay mandate engine above, rather
-than a real Stripe Shared Payment Token integration.
+the in-app chat. The merchant (see `backend/merchant.py`) declares a single
+accepted payment handler, `reserve_pay_mandate`, backed by the mandate
+engine above.
 
-### Guardrails implemented in the mandate engine
-- **Idempotency keys** — an agent retry after a network timeout can't cause
-  a double debit.
-- **Per-transaction cap** — independent of the total mandate size, caps any
-  single AI-initiated purchase (protects against one oversized/hallucinated
-  cart wiping the mandate in one shot).
+## Guardrails in the mandate engine
+
+Removing every friction step only helps growth if it doesn't also remove
+safety. Every debit — no matter which path triggered it — passes through:
+
+- **Idempotency keys** — an agent retry after a network timeout can't cause a double debit.
+- **Per-transaction cap** — independent of total mandate size, so one oversized or hallucinated cart can't drain the whole mandate in one purchase.
 - **Remaining-balance check** — can never debit more than what's left.
-- **Expiry** — mandate stops working after its validity window (capped at
-  Razorpay's real 90-day SBMD limit).
-- **Fail-closed** — any unexpected state blocks the debit rather than
-  allowing it.
-- **Full audit ledger** — every attempt (successful or blocked) is recorded
-  with a reason.
+- **Expiry** — mandate stops working after its validity window (capped at Razorpay's real 90-day SBMD limit).
+- **Fail-closed** — any unexpected state blocks the debit rather than allowing it.
+- **Full audit ledger** — every attempt, successful or blocked, is recorded with a reason.
 
 ## Project layout
 
@@ -111,20 +156,20 @@ agentic-checkout/
     main.py              FastAPI app — chat, mandate, ACP, product endpoints
     agent.py             LangGraph state graph (search/cart/checkout nodes)
     acp.py               Agentic Commerce Protocol checkout-session engine
-    merchant.py           Dummy merchant profile used by ACP responses
+    merchant.py          Dummy merchant profile used by ACP responses
     mandate.py           Guardrailed mandate + ledger engine
     razorpay_client.py   Real Razorpay Orders API + signature verification
     inventory.py         Mock product catalog
     requirements.txt
     .env.example
   frontend/
-    index.html           Single-file UI: chat (with Confirm & Pay card +
+    index.html           Single-file UI: chat (Confirm & Pay card +
                           thinking indicator) + reserve meter + ledger
   README.md
   CHALLENGES.md          Interview prep: what broke, how it was fixed
 ```
 
-## Running it
+## Quickstart
 
 ### 1. Backend
 ```bash
@@ -141,12 +186,13 @@ uvicorn main:app --reload --port 8000
 Just open `frontend/index.html` in a browser. It talks to
 `http://localhost:8000` by default (editable in the top bar). If the
 backend isn't reachable, it automatically falls back to **local demo
-mode** — a client-side mirror of the same guardrail logic — so the UI is
-still fully demoable with no setup.
+mode** — a client-side mirror of the same guardrail logic — so the UI stays
+fully demoable with no setup.
 
 ### API keys: `.env`, in-browser prompt, or skip entirely
-You don't have to have `.env` filled in to run this. On load, the
-frontend asks the backend what's configured (`GET /api/config/status`):
+You don't need `.env` filled in to run this. On load, the frontend asks the
+backend what's configured (`GET /api/config/status`):
+
 - If the server already has `GEMINI_API_KEY` / `RAZORPAY_KEY_ID` +
   `RAZORPAY_KEY_SECRET` in `.env`, nothing else happens.
 - If either is missing, a popup asks for that session's own keys instead
@@ -154,15 +200,15 @@ frontend asks the backend what's configured (`GET /api/config/status`):
   browser session, for the life of the process — never written to disk,
   never logged, never echoed back in full in any response.
 - If you skip the popup (or leave a field blank), that session runs in
-  **test mode**: Gemini calls are simply never attempted (the existing
-  rule-based NLU / template replies take over, same as always), and
-  Razorpay calls use a fully local mock order + a test-only
-  authorization endpoint (`/api/mandate/authorize_test`) instead of real
-  Checkout.js — no network call, no real payment rail touched. A
-  diagonal **TEST MODE** ribbon stays pinned top-right for the whole
-  session as a reminder that nothing here is a real charge.
+  **test mode**: Gemini calls are simply never attempted (rule-based NLU /
+  template replies take over), and Razorpay calls use a fully local mock
+  order plus a test-only authorization endpoint
+  (`/api/mandate/authorize_test`) — no network call, no real payment rail
+  touched. A diagonal **TEST MODE** ribbon stays pinned top-right the whole
+  session as a reminder nothing is a real charge.
 
-### 3. Try it
+## Try it
+
 1. Set a block amount (e.g. ₹5000) and per-transaction cap (e.g. ₹2000),
    click **Authorize with Razorpay (test)**.
 2. Complete the Razorpay test checkout (use a
@@ -173,13 +219,50 @@ frontend asks the backend what's configured (`GET /api/config/status`):
    - `checkout`
 4. Watch the reserve meter deplete and the ledger fill in as the agent
    spends — with zero further authentication.
-5. Try to break it: add several items that exceed your per-transaction cap
-   and checkout — the agent will refuse and tell you why.
+5. Ask for a second item and checkout again — same block, same
+   conversation, still zero-click.
+6. Try to break it: add several items that exceed your per-transaction cap
+   and checkout — the agent refuses and tells you why.
 
-## Why this maps to Razorpay's actual tracks
+## Tech stack
 
-- **AI Risk Manager** — the guardrail/ledger engine is the centerpiece.
-- **AI Revenue Recovery / Agentic Commerce** — zero-click repeat purchases
-  are exactly what Reserve Pay is positioned for (Razorpay's own materials
-  frame it as an execution layer for agent-led commerce).
-- Honest about scope — doesn't claim SBMD business activation it doesn't have.
+| Layer | Choice |
+|---|---|
+| Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) |
+| LLM | Google Gemini (`google-genai`), with rule-based fallback when unconfigured |
+| Backend | FastAPI + Pydantic + Uvicorn |
+| Payments | Razorpay Orders API, Checkout.js, server-side HMAC-SHA256 signature verification |
+| Checkout protocol | [Agentic Commerce Protocol](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol) |
+| Frontend | Single-file HTML/CSS/JS — no build step |
+
+## Challenges & how they were solved
+
+Full write-up in [`CHALLENGES.md`](./CHALLENGES.md). Highlights:
+
+- **Env vars silently not loading** — `python-dotenv` was in
+  `requirements.txt` but `load_dotenv()` was never called, so
+  `os.environ.get()` in `agent.py` / `razorpay_client.py` always returned
+  empty strings (both modules read env vars at *import time*). This caused
+  two seemingly unrelated symptoms at once: Razorpay mandate creation
+  500ing with "keys not set," and the agent silently falling back to
+  rule-based templates instead of calling Gemini. Fixed by moving
+  `load_dotenv()` to the top of `main.py`, before those modules are
+  imported — verified via `TestClient` that `/api/health` reports
+  `razorpay_configured: true`.
+- **Frontend not loading** — the static file path was never registered in
+  `main.py`, so `frontend/index.html` 404'd. Fixed by mounting it properly.
+- **Currency hallucination** — once Gemini was wired in, it started
+  quoting rupee prices as dollars (₹899 → "$8.99"). Fixed with an explicit
+  system-prompt rule: all numbers are already in rupees, render as
+  `Rs <number>` exactly as given, never convert.
+
+## Why this fits the Agentic Commerce track
+
+- **Zero-click repeat purchases** are exactly what Reserve Pay is
+  positioned for — Razorpay's own materials frame it as an execution layer
+  for agent-led commerce.
+- **Conversion, not just conversation** — the project's whole point is
+  closing the loop from recommendation to paid order without a human
+  handoff, which is the actual growth lever agentic commerce is chasing.
+- **Honest about scope** — doesn't claim SBMD business activation it
+  doesn't have, and says so clearly rather than papering over it.
