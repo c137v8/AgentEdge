@@ -1,11 +1,14 @@
 # Agentic Checkout
-### Frictionless AI Commerce, powered by Razorpay UPI Reserve Pay
+### Frictionless AI Commerce, modeled on Razorpay UPI Reserve Pay
 
 An AI shopping agent that authorizes a spending mandate **once**, then
 searches, carts, and checks out on the user's behalf entirely in chat —
 with **zero further PIN prompts, zero re-authentication, zero handoff to a
-human**. Built on the pattern behind Razorpay's UPI Reserve Pay
-(Single Block, Multi Debit / SBMD).
+human**. The mandate engine mirrors the exact lifecycle of Razorpay's UPI
+Reserve Pay (Single Block, Multi Debit / SBMD) — real Razorpay test-mode
+Checkout.js handles the initial fund block, while the repeat zero-click
+debits are simulated (see
+[What's real vs. simulated](#whats-real-vs-simulated-read-this-first) below).
 
 > **The idea in one line:** checkout shouldn't be the moment an AI shopping
 > experience hands back to a human. This project shows what it feels like
@@ -35,14 +38,17 @@ shopping agents today can recommend and cart just fine — but the moment it's
 time to actually pay, most of them still have to hand off to a human, because
 repeated authentication doesn't work inside a chat flow.
 
-Razorpay's UPI Reserve Pay removes that wall: block funds once with
-**Single Block, Multi Debit (SBMD)**, and an approved agent can debit
+Razorpay's UPI Reserve Pay is built to remove that wall: block funds once
+with **Single Block, Multi Debit (SBMD)**, and an approved agent can debit
 against that block repeatedly, with no further authentication. That's the
 missing piece for agent-led commerce to close the loop — from *"I want
 this"* to *"paid"* — inside a single conversation.
 
-**Agentic Checkout** is a working demonstration of that loop, end to end,
-against Razorpay's real test-mode payment rails.
+**Agentic Checkout** is a working demonstration of that loop end to end.
+The initial fund block runs on real Razorpay test-mode Checkout.js; the
+repeat zero-click debits run on a mandate engine built to the same
+lifecycle, since real SBMD access requires business-account activation this
+project doesn't have (details below).
 
 ```
 "show me earbuds under 3000"  →  agent searches, shows options
@@ -260,7 +266,8 @@ Full write-up in [`CHALLENGES.md`](./CHALLENGES.md). Highlights:
 
 - **Zero-click repeat purchases** are exactly what Reserve Pay is
   positioned for — Razorpay's own materials frame it as an execution layer
-  for agent-led commerce.
+  for agent-led commerce. This project models that lifecycle faithfully,
+  even though live SBMD access is gated behind business-account activation.
 - **Conversion, not just conversation** — the project's whole point is
   closing the loop from recommendation to paid order without a human
   handoff, which is the actual growth lever agentic commerce is chasing.
