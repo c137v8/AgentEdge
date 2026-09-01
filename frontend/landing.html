@@ -137,7 +137,7 @@
     <a href="#security">Security</a>
   </div>
   <div class="nav-actions">
-    <a class="pill pill-outline" href="../README.md">Read the docs</a>
+    <a class="pill pill-outline" href="/README.md">Read the docs</a>
     <a class="pill pill-solid" href="index.html">★ Launch demo</a>
   </div>
 </nav>
@@ -240,14 +240,14 @@
   <div class="feature-label">Secure by default, honest about the rest</div>
   <div class="feature-body">
     <p class="fb-highlight">No API keys checked in, no keys required to try it.</p>
-    <p>If the server has no <code>.env</code> keys, the app asks for them in the browser instead — held only in server memory for that session, never written to disk or logged. Skip the prompt entirely and the app drops into a fully local test mode: a rule-based agent, a simulated payment rail, and a persistent on-screen ribbon making it unmistakable that nothing being shown is a real charge.</p>
+    <p>If the server has no <code>.env</code> keys, the app asks for them in the browser instead — held only in server memory for that session, never written to disk or logged. There's no simulated fallback if you skip it: a missing key means the relevant action fails with a clear, specific error (not a fabricated "AI" reply, not a fake order) — and if the backend itself is unreachable, a persistent banner says so and disables the chat until it's back.</p>
     <p>The project is equally upfront about what's simulated elsewhere — see the README's "what's real vs. simulated" table. Nothing here is exaggerated to look further along than it is.</p>
   </div>
 </section>
 
 <div class="demo-band" id="demo">
   <h3>See it work in under a minute</h3>
-  <p>No signup, no real payment details required — test mode is one click away if you'd rather skip the API keys prompt entirely.</p>
+  <p>Paste in your own Gemini and Razorpay test-mode keys — the app asks for them right in the browser if the server doesn't already have them configured.</p>
   <a class="cta-outline" href="index.html" style="color:var(--text); border-color:var(--border); background:var(--bg-panel);">Launch the demo →</a>
 </div>
 
@@ -255,8 +255,8 @@
   <div class="foot-brand"><span style="width:7px;height:7px;border-radius:50%;background:var(--primary);display:inline-block;"></span> Agentic Checkout</div>
   <div>Built as an exploration of agentic commerce infrastructure — for Razorpay's AI Internship, Agentic Commerce track.</div>
   <div class="foot-links">
-    <a href="../README.md">README</a>
-    <a href="../CHALLENGES.md">Challenges &amp; fixes</a>
+    <a href="/README.md">README</a>
+    <a href="/CHALLENGES.md">Challenges &amp; fixes</a>
     <a href="index.html">Launch app</a>
   </div>
 </footer>

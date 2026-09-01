@@ -101,6 +101,19 @@ class gemini_key_override:
         _gemini_key_ctx.reset(self._token)
         return False
 
+
+class AgentUnavailableError(RuntimeError):
+    """
+    Raised whenever Gemini is required but unconfigured or erroring, so
+    callers get a clean, honest failure instead of the agent silently
+    degrading to keyword-matching and template sentences that only look
+    intelligent. main.py catches this and returns a clear HTTP error
+    (or, for the one place money may already have moved -- see
+    _checkout_system_notice below -- a factual, clearly-labeled notice
+    instead of a fabricated "AI" reply).
+    """
+    pass
+
 # Each chat message costs up to 2 Gemini calls (interpret + compose_reply),
 # so a 20/day free-tier key covers roughly 10 messages before every
 # request starts failing with 429 RESOURCE_EXHAUSTED. Once that happens,
@@ -150,32 +163,21 @@ Rules:
 """
 
 
-def _rule_based_interpret(message: str) -> Dict:
-    m = message.lower()
-    has_sku = re.search(r"\bsku_\d+\b", m)
-
-    # Order matters: "add sku_001 to cart" contains the word "cart", so a
-    # naive check-for-"cart"-first would misclassify this as "view_cart".
-    # Checking for an explicit add verb (or a referenced sku id) first
-    # avoids that. Caught during testing -- see CHALLENGES.md.
-    if any(w in m for w in ["checkout", "buy now", "buy it", "place order", "pay now", "confirm order"]):
-        return {"intent": "checkout", "query": "", "max_price": None, "sku_id": ""}
-    if any(w in m for w in ["remove", "delete item", "take out"]):
-        return {"intent": "remove_from_cart", "query": "", "max_price": None, "sku_id": ""}
-    if any(w in m for w in ["add", "buy", "get me", "i want", "i'll take"]):
-        price_match = re.search(r"under\s*(?:rs\.?|₹)?\s*(\d+)", m)
-        return {
-            "intent": "add_to_cart",
-            "query": message,
-            "max_price": int(price_match.group(1)) if price_match else None,
-            "sku_id": has_sku.group(0) if has_sku else "",
-        }
-    if any(w in m for w in ["cart", "what's in my basket", "show basket"]):
-        return {"intent": "view_cart", "query": "", "max_price": None, "sku_id": ""}
-    if any(w in m for w in ["hi", "hello", "hey", "thanks", "thank you"]):
-        return {"intent": "chit_chat", "query": "", "max_price": None, "sku_id": ""}
-    price_match = re.search(r"under\s*(?:rs\.?|₹)?\s*(\d+)", m)
-    return {"intent": "search", "query": message, "max_price": int(price_match.group(1)) if price_match else None, "sku_id": ""}
+def node_interpret(state: AgentState) -> AgentState:
+    message = state["user_message"]
+    cart = state.get("cart", [])
+    if not _effective_gemini_key():
+        raise AgentUnavailableError(
+            "No Gemini API key is configured for this session. Add one in the "
+            "API keys prompt, or set GEMINI_API_KEY in .env on the server."
+        )
+    try:
+        parsed = _gemini_interpret(message, cart)
+    except Exception as e:
+        raise AgentUnavailableError(f"Gemini is currently unavailable: {e}") from e
+    state["intent"] = parsed.get("intent", "chit_chat")
+    state["slots"] = parsed
+    return state
 
 
 def _call_gemini(system: str, user_content: str, max_tokens: int = 300) -> str:
@@ -215,23 +217,7 @@ def _call_gemini(system: str, user_content: str, max_tokens: int = 300) -> str:
 def _gemini_interpret(message: str, cart: List[Dict]) -> Dict:
     text = _call_gemini(INTERPRET_SYSTEM_PROMPT, f"Cart: {json.dumps(cart)}\nMessage: {message}")
     text = re.sub(r"^```json|```$", "", text).strip()
-    return json.loads(text)  # let caller catch + fall back
-
-
-def node_interpret(state: AgentState) -> AgentState:
-    message = state["user_message"]
-    cart = state.get("cart", [])
-    if _effective_gemini_key():
-        try:
-            parsed = _gemini_interpret(message, cart)
-        except Exception as e:
-            logger.warning("Gemini interpret failed, falling back to rules: %s", e)
-            parsed = _rule_based_interpret(message)
-    else:
-        parsed = _rule_based_interpret(message)
-    state["intent"] = parsed.get("intent", "chit_chat")
-    state["slots"] = parsed
-    return state
+    return json.loads(text)  # let caller catch + raise AgentUnavailableError
 
 
 # --------------------------------------------------------------------------
@@ -480,69 +466,44 @@ Hard rules:
 """
 
 
-def _checkout_result_text(f: Dict) -> str:
+def _checkout_system_notice(f: Dict) -> str:
+    """
+    A minimal, factual, clearly-labeled notice used ONLY as the reply text
+    when Gemini is unavailable AND facts.type == "checkout" -- i.e. only
+    after execute_checkout() has already run and money may already have
+    moved. This is deliberately not a general-purpose "personality"
+    fallback (that's been removed): it's a safety-critical exception,
+    because a completed debit's outcome can never be silently dropped just
+    because the reply-writer is down. See compose_reply_from_facts below.
+    """
+    if f.get("ok"):
+        merchant_bit = f" with {f['merchant']}" if f.get("merchant") else ""
+        return f"[System notice] Checkout SUCCEEDED{merchant_bit}. Charged Rs {f['amount']}. Order {f['txn_id']}."
     reason = f.get("reason")
     if reason == "empty_cart":
-        return "Your cart is empty, nothing to check out."
+        return "[System notice] Checkout not attempted: cart was empty."
     if reason == "no_mandate":
-        return "You haven't authorized a spending mandate yet. Set one up in Payments before I can check out on your behalf."
-    return f"I stopped this purchase: {f.get('detail', reason)}"
-
-
-def _fallback_compose(facts: Dict) -> str:
-    t = facts.get("type")
-    if t == "search_results":
-        items = facts.get("items", [])
-        if not items:
-            return "I couldn't find anything matching that. Try a different search?"
-        lines = [f"- {i['name']} ({i['id']}) — Rs {i['price']}" for i in items]
-        return "Here's what I found:\n" + "\n".join(lines) + "\n\nSay 'add <name or sku id>' to add one to your cart."
-    if t == "add_to_cart":
-        if facts.get("ok"):
-            item = facts["added_item"]
-            return f"Added {item['name']} (Rs {item['price']}) to your cart. Cart total: Rs {facts['cart_total']}."
-        reason = facts.get("reason")
-        if reason == "ambiguous_reference":
-            opts = facts.get("options", [])
-            return "Which one did you mean — " + " or ".join(opts) + "?"
-        return "I couldn't find that item. Try naming it more specifically or searching first."
-    if t == "remove_from_cart":
-        if not facts.get("ok"):
-            return "Tell me the item to remove, e.g. 'remove sku_003'."
-        return f"Removed. Cart total is now Rs {facts['cart_total']}."
-    if t == "view_cart":
-        cart = facts.get("cart", [])
-        if not cart:
-            return "Your cart is empty."
-        lines = [f"- {i['name']} ({i['id']}) — Rs {i['price']}" for i in cart]
-        return "Your cart:\n" + "\n".join(lines) + f"\n\nTotal: Rs {facts['cart_total']}"
-    if t == "confirm_checkout":
-        if facts.get("ok"):
-            return f"Ready to check out {', '.join(facts['items'])} for Rs {facts['amount']}. Tap Confirm & Pay to complete it."
-        return f"I can't check out yet: {facts.get('reason')}."
-    if t == "checkout":
-        if facts.get("ok"):
-            merchant_bit = f" with {facts['merchant']}" if facts.get("merchant") else ""
-            return (
-                f"Done — charged Rs {facts['amount']}{merchant_bit} against your mandate with zero further taps. "
-                f"Order {facts['txn_id']}. No PIN prompt needed, it was within your pre-authorized limit."
-            )
-        return _checkout_result_text(facts)
-    return (
-        "Hi! I can search products, manage your cart, and check out for you "
-        "once you've authorized a spending mandate. Try: 'show me earbuds under 3000'."
-    )
+        return "[System notice] Checkout not attempted: no authorized mandate."
+    return f"[System notice] Checkout FAILED: {f.get('detail', reason)}"
 
 
 def compose_reply_from_facts(facts: Dict) -> str:
-    if _effective_gemini_key():
-        try:
-            reply = _call_gemini(COMPOSE_SYSTEM_PROMPT, json.dumps(facts), max_tokens=200)
-            if reply:
-                return _with_checkout_signature(reply, facts)
-        except Exception as e:
-            logger.warning("Gemini compose_reply failed, falling back to templates: %s", e)
-    return _with_checkout_signature(_fallback_compose(facts), facts)
+    if not _effective_gemini_key():
+        if facts.get("type") == "checkout":
+            return _checkout_system_notice(facts) + " (AI reply unavailable: no Gemini API key configured.)"
+        raise AgentUnavailableError(
+            "No Gemini API key is configured for this session. Add one in the "
+            "API keys prompt, or set GEMINI_API_KEY in .env on the server."
+        )
+    try:
+        reply = _call_gemini(COMPOSE_SYSTEM_PROMPT, json.dumps(facts), max_tokens=200)
+        if not reply:
+            raise ValueError("Gemini returned an empty reply")
+    except Exception as e:
+        if facts.get("type") == "checkout":
+            return _checkout_system_notice(facts) + f" (AI reply unavailable: {e})"
+        raise AgentUnavailableError(f"Gemini is currently unavailable: {e}") from e
+    return _with_checkout_signature(reply, facts)
 
 
 def _with_checkout_signature(reply: str, facts: Dict) -> str:
@@ -550,7 +511,7 @@ def _with_checkout_signature(reply: str, facts: Dict) -> str:
     Appends a short P.S. after every SUCCESSFUL checkout. Done here in code
     rather than left to the LLM's system prompt so it's always exactly this
     line, worded identically, regardless of whether Gemini or the
-    rule-based fallback produced the rest of the reply.
+    checkout-system-notice path produced the rest of the reply.
     """
     if facts.get("type") == "checkout" and facts.get("ok"):
         return f"{reply}\n\nP.S. — Powered by Agentic Checkout."

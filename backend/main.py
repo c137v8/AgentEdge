@@ -1,8 +1,8 @@
 import logging
 import os
 import uuid
+from pathlib import Path
 from typing import Dict, List, Optional
-from fastapi.staticfiles import StaticFiles
 
 # MUST run before importing agent/razorpay_client -- both read env vars
 # (GEMINI_API_KEY, RAZORPAY_KEY_ID, etc.) at module import time via
@@ -16,8 +16,9 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import acp
@@ -26,8 +27,6 @@ import inventory
 import mandate as mandate_mod
 import merchant as merchant_mod
 import razorpay_client
-from pathlib import Path
-from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="Agentic Checkout API")
 
@@ -64,7 +63,6 @@ def _session(session_id: str) -> Dict:
     return SESSIONS.setdefault(session_id, {
         "cart": [], "mandate_id": None, "last_shown_items": [],
         "keys": {"gemini_api_key": None, "razorpay_key_id": None, "razorpay_key_secret": None},
-        "test_mode": False,
     })
 
 
@@ -98,10 +96,17 @@ class ChatRequest(BaseModel):
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     session = _session(req.session_id)
-    with agent_mod.gemini_key_override(session["keys"].get("gemini_api_key")):
-        result = agent_mod.run_agent(
-            req.message, session["cart"], session["mandate_id"], session.get("last_shown_items", [])
-        )
+    try:
+        with agent_mod.gemini_key_override(session["keys"].get("gemini_api_key")):
+            result = agent_mod.run_agent(
+                req.message, session["cart"], session["mandate_id"], session.get("last_shown_items", [])
+            )
+    except agent_mod.AgentUnavailableError as e:
+        # No silent rule-based/template degrade -- surface a clear, honest
+        # error instead. Nothing in session state (cart, mandate) has been
+        # touched at this point, since node_interpret is the very first
+        # node in the graph and raises before any action node can run.
+        raise HTTPException(status_code=503, detail=f"AI is currently unavailable: {e}")
     session["cart"] = result.get("cart", session["cart"])
     session["last_shown_items"] = result.get("last_shown_items", session.get("last_shown_items", []))
     return {
@@ -129,6 +134,11 @@ def confirm_checkout(req: ConfirmCheckoutRequest):
     facts = agent_mod.execute_checkout(session["cart"], session["mandate_id"])
     if facts.get("ok"):
         session["cart"] = []
+    # compose_reply_from_facts() never raises for facts.type == "checkout" --
+    # if Gemini is unavailable it falls back to a minimal, honestly-labeled
+    # factual notice instead (see agent._checkout_system_notice), because
+    # the debit outcome above may already be real and can never be hidden
+    # behind an error just because the reply-writer is down.
     with agent_mod.gemini_key_override(session["keys"].get("gemini_api_key")):
         reply = agent_mod.compose_reply_from_facts(facts)
     return {
@@ -153,12 +163,12 @@ class CreateMandateRequest(BaseModel):
 @app.post("/api/mandate/create")
 def create_mandate(req: CreateMandateRequest):
     """
-    Step 1 of authorization: create a Razorpay Order for the amount the
-    user wants to block, then have the frontend open Checkout.js against
-    it. This is a genuine Razorpay API call UNLESS the session is in test
-    mode (no real keys anywhere), in which case a local mock order is
-    used instead and the frontend skips Checkout.js entirely -- see
-    "test_mode" in the response and /api/mandate/authorize_test below.
+    Step 1 of authorization: create a real Razorpay Order (test mode) for
+    the amount the user wants to block, then have the frontend open
+    Checkout.js against it. Requires real Razorpay test-mode keys -- either
+    from the server's .env or from this session's API keys prompt. If
+    neither is configured, this fails with a clear 400 explaining exactly
+    that, instead of silently creating a fake order.
     """
     # Fail with a clear 400 instead of an opaque 500 if the request itself
     # is invalid (e.g. above Reserve Pay's real Rs 10,000 block cap) --
@@ -176,28 +186,24 @@ def create_mandate(req: CreateMandateRequest):
     session = _session(req.session_id)
     keys = session["keys"]
 
-    if session["test_mode"]:
-        order = razorpay_client.create_mock_order(
+    try:
+        order = razorpay_client.create_authorization_order(
             amount_rupees=req.max_amount,
-            receipt=f"mandate_TEST_{uuid.uuid4().hex[:10]}",
+            receipt=f"mandate_{uuid.uuid4().hex[:10]}",
+            notes={"purpose": "agentic_checkout_mandate_authorization"},
+            key_id=keys.get("razorpay_key_id"),
+            key_secret=keys.get("razorpay_key_secret"),
         )
-    else:
-        try:
-            order = razorpay_client.create_authorization_order(
-                amount_rupees=req.max_amount,
-                receipt=f"mandate_{uuid.uuid4().hex[:10]}",
-                notes={"purpose": "agentic_checkout_mandate_authorization"},
-                key_id=keys.get("razorpay_key_id"),
-                key_secret=keys.get("razorpay_key_secret"),
-            )
-        except RuntimeError as e:
-            # Missing/unset API keys -- most common cause of a 500 here.
-            raise HTTPException(status_code=500, detail=str(e))
-        except Exception as e:
-            # Razorpay SDK errors (bad key format, invalid request, network
-            # issue, etc). Surfacing the real message instead of a blank 500
-            # is the difference between debugging in 10 seconds vs 10 minutes.
-            raise HTTPException(status_code=502, detail=f"Razorpay order creation failed: {e}")
+    except RuntimeError as e:
+        # Missing/unset API keys. 400, not 500 -- this is a configuration
+        # problem the user can fix themselves via the API keys prompt, not
+        # a server fault.
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Razorpay SDK errors (bad key format, invalid request, network
+        # issue, etc). Surfacing the real message instead of a blank 500
+        # is the difference between debugging in 10 seconds vs 10 minutes.
+        raise HTTPException(status_code=502, detail=f"Razorpay order creation failed: {e}")
 
     try:
         m = mandate_mod.store.create(
@@ -213,12 +219,9 @@ def create_mandate(req: CreateMandateRequest):
     return {
         "mandate_id": m.id,
         "razorpay_order_id": order["id"],
-        # Never hand out a key_id (or open Checkout.js against it) for a
-        # test-mode session -- there's no real key behind it.
-        "razorpay_key_id": None if session["test_mode"] else (keys.get("razorpay_key_id") or razorpay_client.RAZORPAY_KEY_ID),
+        "razorpay_key_id": keys.get("razorpay_key_id") or razorpay_client.RAZORPAY_KEY_ID,
         "amount_paise": order["amount"],
         "currency": order["currency"],
-        "test_mode": session["test_mode"],
     }
 
 
@@ -239,40 +242,17 @@ def verify_mandate(req: VerifyMandateRequest):
     up to the guardrails set at creation time.
     """
     session = _session(req.session_id)
-    ok = razorpay_client.verify_payment_signature(
-        req.razorpay_order_id, req.razorpay_payment_id, req.razorpay_signature,
-        key_secret=session["keys"].get("razorpay_key_secret"),
-    )
+    try:
+        ok = razorpay_client.verify_payment_signature(
+            req.razorpay_order_id, req.razorpay_payment_id, req.razorpay_signature,
+            key_secret=session["keys"].get("razorpay_key_secret"),
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not ok:
         raise HTTPException(status_code=400, detail="Signature verification failed.")
 
     m = mandate_mod.store.authorize(req.mandate_id, req.razorpay_payment_id)
-    session["mandate_id"] = m.id
-    return {"status": m.status.value, "mandate": m.to_public_dict()}
-
-
-class AuthorizeTestMandateRequest(BaseModel):
-    session_id: str
-    mandate_id: str
-
-
-@app.post("/api/mandate/authorize_test")
-def authorize_test_mandate(req: AuthorizeTestMandateRequest):
-    """
-    TEST-MODE-ONLY authorization path. Used exclusively when this session
-    has no real Razorpay keys anywhere (session["test_mode"] is True) --
-    there is no real Checkout.js payment for the frontend to have run, so
-    there's no signature to verify. Hard-refuses to run for any session
-    that isn't in test mode, so this can never become a shortcut around
-    real signature verification for a session that DOES have live keys.
-    """
-    session = _session(req.session_id)
-    if not session["test_mode"]:
-        raise HTTPException(
-            status_code=400,
-            detail="This session has real payment keys configured; use /api/mandate/verify instead.",
-        )
-    m = mandate_mod.store.authorize(req.mandate_id, f"pay_TEST{uuid.uuid4().hex[:14]}")
     session["mandate_id"] = m.id
     return {"status": m.status.value, "mandate": m.to_public_dict()}
 
@@ -311,13 +291,13 @@ def health():
 #    process's RAM), for this session, for the life of the process. They
 #    are never written to disk, never included in any log line, and never
 #    echoed back in full in any response (see _mask() above).
-#  - Skipping (no keys at all) sets test_mode -- Gemini calls simply don't
-#    fire (the agent's existing rule-based/template fallback takes over
-#    automatically, same as it always has), and Razorpay calls use a fully
-#    local mock with no network call and no real payment rail touched.
-#  - /api/mandate/authorize_test (above) refuses to run for any session
-#    that isn't in test_mode, so a session with real keys can never
-#    accidentally skip real signature verification.
+#  - There is no "skip -> simulate everything" mode anymore. If a key is
+#    missing, the relevant endpoint fails with a clear, actionable error
+#    (see AgentUnavailableError handling in /api/chat, and the plain
+#    RuntimeError -> HTTPException(400) handling in /api/mandate/create
+#    and /api/mandate/verify) instead of silently substituting fake
+#    behavior. The popup just lets a session add real keys without
+#    touching the server's .env.
 # ---------------------------------------------------------------------------
 
 @app.get("/api/config/status")
@@ -334,7 +314,6 @@ def config_status(session_id: str):
         "razorpay_session_configured": bool(keys.get("razorpay_key_id") and keys.get("razorpay_key_secret")),
         "gemini_key_preview": _mask(keys.get("gemini_api_key")),
         "razorpay_key_id_preview": _mask(keys.get("razorpay_key_id")),
-        "test_mode": session["test_mode"],
     }
 
 
@@ -343,34 +322,21 @@ class ConfigKeysRequest(BaseModel):
     gemini_api_key: Optional[str] = None
     razorpay_key_id: Optional[str] = None
     razorpay_key_secret: Optional[str] = None
-    skip: bool = False
 
 
 @app.post("/api/config/keys")
 def set_config_keys(req: ConfigKeysRequest):
     session = _session(req.session_id)
-
-    if req.skip:
-        session["test_mode"] = True
-        return {"test_mode": True}
-
     if req.gemini_api_key:
         session["keys"]["gemini_api_key"] = req.gemini_api_key.strip()
     if req.razorpay_key_id:
         session["keys"]["razorpay_key_id"] = req.razorpay_key_id.strip()
     if req.razorpay_key_secret:
         session["keys"]["razorpay_key_secret"] = req.razorpay_key_secret.strip()
-
-    has_razorpay = bool(
-        (session["keys"]["razorpay_key_id"] and session["keys"]["razorpay_key_secret"])
-        or (razorpay_client.RAZORPAY_KEY_ID and razorpay_client.RAZORPAY_KEY_SECRET)
-    )
-    # test_mode tracks payments specifically (it drives the ribbon + the
-    # mandate/Checkout.js path) -- Gemini has its own silent fallback and
-    # doesn't need a mode flag; not having a key just means node_interpret /
-    # compose_reply use the deterministic rule-based path automatically.
-    session["test_mode"] = not has_razorpay
-    return {"test_mode": session["test_mode"]}
+    return {
+        "gemini_session_configured": bool(session["keys"]["gemini_api_key"]),
+        "razorpay_session_configured": bool(session["keys"]["razorpay_key_id"] and session["keys"]["razorpay_key_secret"]),
+    }
 
 
 @app.get("/api/merchant")
@@ -506,15 +472,52 @@ def acp_cancel_checkout_session(checkout_session_id: str):
     except acp.ACPError as e:
         raise HTTPException(status_code=e.http_status, detail=e.to_dict())
     return session.to_dict()
-# ... all your @app.get / @app.post routes ...
 
-BASE_DIR = Path(__file__).resolve().parent.parent
 
-app.mount(
-    "/",
-    StaticFiles(
-        directory=BASE_DIR / "frontend",
-        html=True
-    ),
-    name="frontend"
-)
+# ---------------------------------------------------------------------------
+# Serve the project's own docs at the paths the landing page links to
+# (README.md, CHALLENGES.md), read live from the project root rather than
+# duplicated into frontend/ -- one source of truth, no risk of the copy
+# going stale. These are real @app.get routes, so (per the ordering note
+# below) they're matched before the StaticFiles mount ever sees the request,
+# regardless of where they're defined relative to it.
+# ---------------------------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+@app.get("/README.md")
+def readme():
+    path = PROJECT_ROOT / "README.md"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="README.md not found.")
+    return Response(content=path.read_text(encoding="utf-8"), media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/CHALLENGES.md")
+def challenges():
+    path = PROJECT_ROOT / "CHALLENGES.md"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="CHALLENGES.md not found.")
+    return Response(content=path.read_text(encoding="utf-8"), media_type="text/markdown; charset=utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Serve the frontend from this same process.
+#
+# On a single-service host like Render, there's only one process and one
+# port -- there's no separate static file server, so uvicorn has to serve
+# BOTH the API above and the plain HTML/CSS/JS frontend. This mount MUST be
+# the last thing registered: FastAPI/Starlette checks routes in the order
+# they were added, so every @app.get/@app.post route above still gets
+# matched first (e.g. GET /api/health, GET /README.md never fall through to
+# here) and this mount only ever catches whatever's left -- "/" ->
+# frontend/index.html, "/landing.html" -> frontend/landing.html, etc.
+# html=True also makes it serve index.html for any unmatched path, so the
+# app still loads correctly even if someone deep-links to a path that
+# doesn't exist as a file.
+# ---------------------------------------------------------------------------
+FRONTEND_DIR = PROJECT_ROOT / "frontend"
+if FRONTEND_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+else:
+    logging.getLogger("main").warning("frontend/ directory not found at %s -- static files not served.", FRONTEND_DIR)

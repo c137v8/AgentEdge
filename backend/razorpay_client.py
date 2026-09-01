@@ -17,14 +17,15 @@ Keys can come from two places:
      logged, or cached in a module-level variable -- they live only in
      main.py's in-memory SESSIONS dict for the lifetime of the process.
 
-If NEITHER is available for a session, the user explicitly chose "Skip /
-Test mode" and this module's mock functions (bottom of file) are used
-instead -- no network call, no real payment rail touched.
+If NEITHER is available, there is no silent fallback: get_client() below
+raises a clear RuntimeError, which main.py turns into a plain HTTP error
+the frontend shows to the user. No mock order, no simulated payment --
+just an honest "you need to add a key for this" instead of quietly
+pretending to have processed a real authorization.
 """
 import hmac
 import hashlib
 import os
-import uuid
 from typing import Dict, Optional
 
 import razorpay
@@ -38,9 +39,9 @@ def get_client(key_id: Optional[str] = None, key_secret: Optional[str] = None) -
     key_secret = key_secret or RAZORPAY_KEY_SECRET
     if not key_id or not key_secret:
         raise RuntimeError(
-            "Razorpay key id/secret not set. Paste your TEST mode keys into the "
-            "API keys prompt, or set RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET in .env "
-            "on the server -- or choose Skip to use test mode."
+            "Razorpay key id/secret not set for this session. Paste your TEST mode "
+            "keys into the API keys prompt, or set RAZORPAY_KEY_ID / "
+            "RAZORPAY_KEY_SECRET in .env on the server."
         )
     # A fresh Client() per call is intentional: key pairs can differ across
     # sessions, so there is no single global client to safely cache anymore.
@@ -76,26 +77,8 @@ def verify_payment_signature(order_id: str, payment_id: str, signature: str,
     """
     secret = key_secret or RAZORPAY_KEY_SECRET
     if not secret:
-        raise RuntimeError("Razorpay key secret not set.")
+        raise RuntimeError("Razorpay key secret not set for this session.")
     payload = f"{order_id}|{payment_id}".encode()
     expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
-
-
-# ---------------------------------------------------------------------------
-# TEST MODE -- no real keys anywhere (server .env or session popup). Fully
-# local mock so the app stays usable with zero setup. No network call is
-# made and no real payment rail is ever touched; the frontend is expected
-# to show a persistent "test mode" ribbon whenever this path is active
-# (see main.py's session["test_mode"] and GET /api/config/status).
-# ---------------------------------------------------------------------------
-
-def create_mock_order(amount_rupees: float, receipt: str) -> Dict:
-    return {
-        "id": f"order_TEST{uuid.uuid4().hex[:14]}",
-        "amount": int(round(amount_rupees * 100)),
-        "currency": "INR",
-        "receipt": receipt,
-        "status": "created",
-    }
 

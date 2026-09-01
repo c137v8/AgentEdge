@@ -134,12 +134,13 @@
   .confirm-card.cc-done{opacity:.6;}
   .confirm-card .cc-status{font-size:12.5px; font-family:var(--mono); color:var(--muted); margin-top:2px;}
 
-  /* ---- Test mode ribbon ---- */
-  .test-ribbon{position:fixed; top:14px; right:-46px; width:190px; padding:6px 0; text-align:center;
-    background:var(--warn); color:#241C05; font-family:var(--mono); font-size:11px; font-weight:700;
-    letter-spacing:.05em; transform:rotate(40deg); box-shadow:0 4px 14px rgba(0,0,0,.35); z-index:200;
-    pointer-events:none; user-select:none;}
-  .test-ribbon span{display:block;}
+  /* ---- Backend-unreachable banner ---- */
+  .backend-banner{position:fixed; top:0; left:0; right:0; z-index:250; display:none; align-items:center;
+    justify-content:center; gap:14px; padding:10px 20px; background:var(--danger); color:#2A0A0A;
+    font-size:13px; font-weight:600; text-align:center; flex-wrap:wrap;}
+  .backend-banner button{background:#1A0505; color:#fff; border:none; padding:6px 14px; border-radius:7px;
+    font-size:12.5px; font-weight:600; cursor:pointer;}
+  .backend-banner button:hover{background:#2A0A0A;}
 
   /* ---- API keys modal ---- */
   .keys-modal-overlay{position:fixed; inset:0; background:rgba(0,0,0,.6); backdrop-filter:blur(2px);
@@ -245,22 +246,25 @@
 </head>
 <body>
 
-<div class="test-ribbon" id="testRibbon" style="display:none;"><span>TEST MODE</span></div>
+<div class="backend-banner" id="backendBanner">
+  <span>Backend unreachable at <code id="backendBannerUrl"></code> — start the FastAPI server, then retry.</span>
+  <button id="backendRetryBtn">Retry</button>
+</div>
 
 <div class="keys-modal-overlay" id="keysModalOverlay" style="display:none;">
   <div class="keys-modal">
     <h2>Add your API keys</h2>
-    <p class="km-sub">No <code>.env</code> keys were found on the server. Paste your own to run this session live, or skip to use test mode (rule-based agent + simulated payments, no real API calls).</p>
+    <p class="km-sub">No <code>.env</code> keys were found on the server. Paste your own to use the AI agent and real Razorpay test-mode payments. Without these, the relevant features will show a clear error instead of working.</p>
     <div class="km-field">
-      <label for="kmGemini">Gemini API key <span style="opacity:.6">(optional)</span></label>
+      <label for="kmGemini">Gemini API key</label>
       <input id="kmGemini" type="password" placeholder="AIza…" autocomplete="off" />
     </div>
     <div class="km-field">
-      <label for="kmRzpId">Razorpay key id <span style="opacity:.6">(optional)</span></label>
+      <label for="kmRzpId">Razorpay key id</label>
       <input id="kmRzpId" type="text" placeholder="rzp_test_…" autocomplete="off" />
     </div>
     <div class="km-field">
-      <label for="kmRzpSecret">Razorpay key secret <span style="opacity:.6">(optional)</span></label>
+      <label for="kmRzpSecret">Razorpay key secret</label>
       <input id="kmRzpSecret" type="password" placeholder="…" autocomplete="off" />
     </div>
     <div class="km-security">
@@ -268,10 +272,10 @@
       Kept in server memory for this session only — never written to disk, never logged, never sent anywhere except the API you named. Cleared when the server restarts.
     </div>
     <div class="km-actions">
-      <button class="km-skip" id="kmSkipBtn">Skip — use test mode</button>
+      <button class="km-skip" id="kmSkipBtn">Not now</button>
       <button class="km-save" id="kmSaveBtn">Save &amp; continue</button>
     </div>
-    <div class="km-skip-note">You can also save just one key and skip the other — whatever's missing falls back to test mode.</div>
+    <div class="km-skip-note">You can add just one key and skip the other — each feature only needs its own key.</div>
   </div>
 </div>
 
@@ -395,8 +399,17 @@
 const $ = (id) => document.getElementById(id);
 const sessionId = 'sess_' + Math.random().toString(36).slice(2, 10);
 
-let state = { mandate: null, cart: [], demoMode: false, merchantName: null };
-const DEMO_MERCHANT_NAME = 'Nilgiri Basics'; // dummy merchant used by local demo mode too
+// Default the API base to this page's own origin when it's actually being
+// served over http(s) -- e.g. on Render, one process serves both the API
+// and this frontend from the same origin, so there's nothing to configure.
+// Falls back to the hardcoded localhost:8000 in the HTML above when this
+// file is opened directly as file://, since there's no meaningful origin
+// then and the backend is presumably running separately on 8000.
+if(location.protocol === 'http:' || location.protocol === 'https:'){
+  $('apiBase').value = location.origin;
+}
+
+let state = { mandate: null, cart: [], merchantName: null, backendReachable: false };
 
 function apiBase(){ return $('apiBase').value.replace(/\/$/, ''); }
 function money(n){ return '₹' + Number(n).toFixed(0); }
@@ -508,10 +521,7 @@ function addConfirmCard(items, amount, merchantName, onConfirm){
   });
 }
 
-// ---------------- API keys popup / test mode ribbon ----------------
-function updateTestRibbon(isTestMode){
-  $('testRibbon').style.display = isTestMode ? 'block' : 'none';
-}
+// ---------------- API keys popup ----------------
 function showKeysModal(){ $('keysModalOverlay').style.display = 'flex'; }
 function hideKeysModal(){ $('keysModalOverlay').style.display = 'none'; }
 
@@ -520,27 +530,17 @@ async function checkApiKeyConfig(){
     const r = await fetch(apiBase() + '/api/config/status?session_id=' + encodeURIComponent(sessionId), { signal: AbortSignal.timeout(2500) });
     if(!r.ok) return;
     const j = await r.json();
-    updateTestRibbon(j.test_mode);
     const needsGemini = !j.gemini_env_configured && !j.gemini_session_configured;
     const needsRazorpay = !j.razorpay_env_configured && !j.razorpay_session_configured;
-    // Only prompt if something is missing AND the session hasn't already
-    // resolved that (by saving keys, or by skipping into test mode earlier).
-    if((needsGemini || needsRazorpay) && !j.test_mode){
-      showKeysModal();
-    }
-  }catch(e){ /* non-fatal -- existing fallbacks keep the app usable either way */ }
+    if(needsGemini || needsRazorpay) showKeysModal();
+  }catch(e){ /* non-fatal -- worst case the popup just doesn't appear proactively */ }
 }
 
-$('kmSkipBtn').addEventListener('click', async () => {
-  try{
-    await fetch(apiBase() + '/api/config/keys', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ session_id: sessionId, skip: true })
-    });
-  }catch(e){ /* falls back to server-side defaults either way */ }
-  updateTestRibbon(true);
-  hideKeysModal();
-});
+// "Not now" just dismisses the popup -- there's no simulated test mode to
+// drop into. Whatever's missing will surface as a clear, specific error
+// the next time it's actually needed (see AgentUnavailableError handling
+// in /api/chat, and the plain error messages from /api/mandate/create).
+$('kmSkipBtn').addEventListener('click', () => hideKeysModal());
 
 $('kmSaveBtn').addEventListener('click', async () => {
   const gemini = $('kmGemini').value.trim();
@@ -551,12 +551,10 @@ $('kmSaveBtn').addEventListener('click', async () => {
     if(gemini) body.gemini_api_key = gemini;
     if(rzpId) body.razorpay_key_id = rzpId;
     if(rzpSecret) body.razorpay_key_secret = rzpSecret;
-    const r = await fetch(apiBase() + '/api/config/keys', {
+    await fetch(apiBase() + '/api/config/keys', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(body)
     });
-    const j = await r.json();
-    updateTestRibbon(j.test_mode);
     $('kmGemini').value = ''; $('kmRzpId').value = ''; $('kmRzpSecret').value = '';
   }catch(e){
     addMsg('Could not save keys: ' + e.message, 'system');
@@ -564,65 +562,69 @@ $('kmSaveBtn').addEventListener('click', async () => {
   hideKeysModal();
 });
 
-// ---------------- Health check / mode ----------------
+// ---------------- Health check / backend reachability ----------------
+function setBackendBanner(show){
+  $('backendBanner').style.display = show ? 'flex' : 'none';
+  $('backendBannerUrl').textContent = apiBase();
+  $('msgInput').disabled = show;
+  $('sendBtn').disabled = show;
+  $('authBtn').disabled = show;
+}
+
 async function checkBackend(){
   try{
     const r = await fetch(apiBase() + '/api/health', { signal: AbortSignal.timeout(2500) });
+    if(!r.ok) throw new Error('Health check returned ' + r.status);
     const j = await r.json();
-    state.demoMode = false;
+    state.backendReachable = true;
+    setBackendBanner(false);
     $('modeBadge').textContent = 'live backend' + (j.razorpay_configured ? ' · razorpay ok' : ' · no razorpay keys');
     try{
       const mr = await fetch(apiBase() + '/api/merchant', { signal: AbortSignal.timeout(2500) });
       if(mr.ok){ const mj = await mr.json(); state.merchantName = mj.storefront_name || mj.business_name; }
     }catch(e){ /* non-fatal -- card just omits the merchant line */ }
     await checkApiKeyConfig();
+    loadProducts();
   } catch(e){
-    state.demoMode = true;
-    state.merchantName = DEMO_MERCHANT_NAME;
-    $('modeBadge').textContent = 'local demo mode';
-    // No backend reachable at all -- everything is already simulated
-    // client-side, so this is test mode by definition.
-    updateTestRibbon(true);
+    state.backendReachable = false;
+    $('modeBadge').textContent = 'backend unreachable';
+    setBackendBanner(true);
+    renderProductsError();
   }
-  loadProducts();
 }
+$('backendRetryBtn').addEventListener('click', checkBackend);
 
 // ---------------- Products / Catalog ----------------
-const DEMO_CATALOG = [
-  {id:'sku_001', name:'Wireless Earbuds Pro', price:2499},
-  {id:'sku_002', name:'Mechanical Keyboard 87-key', price:3999},
-  {id:'sku_003', name:'Steel Water Bottle 1L', price:599},
-  {id:'sku_006', name:'USB-C Fast Charger 65W', price:1299},
-  {id:'sku_007', name:'Yoga Mat Premium', price:899},
-  {id:'sku_009', name:'Backpack Urban 25L', price:2199},
-];
+function renderProductsError(){
+  $('productsGrid').innerHTML = '<div class="ledger-empty">Can\'t load products — backend unreachable.</div>';
+}
 
 async function loadProducts(){
-  let items = DEMO_CATALOG;
-  if(!state.demoMode){
-    try{
-      const r = await fetch(apiBase() + '/api/products');
-      const j = await r.json();
-      if(j.items && j.items.length) items = j.items;
-    }catch(e){}
-  }
-  $('productsGrid').innerHTML = items.map(i => `
-    <div class="pcard">
-      <div class="pname">${i.name}</div>
-      <div class="pprice">${money(i.price)}</div>
-      <div class="psku">${i.id}</div>
-      <button data-sku="${i.id}" class="add-from-catalog">Add to cart</button>
-    </div>
-  `).join('');
-  document.querySelectorAll('.add-from-catalog').forEach(b => {
-    b.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
-      document.querySelectorAll('.view').forEach(x => x.classList.remove('active'));
-      document.querySelector('.nav-item[data-view="chat"]').classList.add('active');
-      $('view-chat').classList.add('active');
-      sendMessage(`add ${b.dataset.sku} to cart`);
+  try{
+    const r = await fetch(apiBase() + '/api/products');
+    if(!r.ok) throw new Error('status ' + r.status);
+    const j = await r.json();
+    const items = j.items || [];
+    $('productsGrid').innerHTML = items.map(i => `
+      <div class="pcard">
+        <div class="pname">${i.name}</div>
+        <div class="pprice">${money(i.price)}</div>
+        <div class="psku">${i.id}</div>
+        <button data-sku="${i.id}" class="add-from-catalog">Add to cart</button>
+      </div>
+    `).join('');
+    document.querySelectorAll('.add-from-catalog').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
+        document.querySelectorAll('.view').forEach(x => x.classList.remove('active'));
+        document.querySelector('.nav-item[data-view="chat"]').classList.add('active');
+        $('view-chat').classList.add('active');
+        sendMessage(`add ${b.dataset.sku} to cart`);
+      });
     });
-  });
+  }catch(e){
+    renderProductsError();
+  }
 }
 
 // ---------------- Cart pill + dropdown ----------------
@@ -716,45 +718,18 @@ $('authBtn').addEventListener('click', async () => {
   const perTxnCap = Number($('perTxnInput').value);
   if(!maxAmount || maxAmount <= 0){ addMsg('Enter a valid amount to set aside.', 'system'); return; }
 
-  if(state.demoMode){
-    state.mandate = {
-      mandate_id: 'demo_mandate_' + Date.now(),
-      status: 'AUTHORIZED',
-      max_amount: maxAmount, per_txn_cap: perTxnCap,
-      utilised: 0, available: maxAmount, ledger: [],
-    };
-    addMsg(`[Demo mode] Simulated authorization for ${money(maxAmount)}. In live mode this opens real Razorpay Checkout (test mode).`, 'system');
-    renderMandate();
-    return;
-  }
-
   try{
     const r = await fetch(apiBase() + '/api/mandate/create', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ session_id: sessionId, max_amount: maxAmount, per_txn_cap: perTxnCap, days_valid: 30 })
     });
-    if(!r.ok){ const t = await r.text(); addMsg('Could not set up the mandate: ' + t, 'system'); return; }
-    const order = await r.json();
-
-    // TEST MODE (no real Razorpay keys anywhere for this session): there's
-    // no real key to open Checkout.js with, so skip straight to the
-    // test-only authorization endpoint instead. No real payment rail is
-    // touched -- see razorpay_client.create_mock_order / /api/mandate/authorize_test.
-    if(order.test_mode){
-      const vr = await fetch(apiBase() + '/api/mandate/authorize_test', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ session_id: sessionId, mandate_id: order.mandate_id })
-      });
-      const vj = await vr.json();
-      if(vr.ok){
-        state.mandate = vj.mandate;
-        addMsg('[Test mode] Mandate authorized with a simulated payment — no real money moved. I can now check out on your behalf up to your limits.', 'system');
-      } else {
-        addMsg('Could not authorize the test mandate: ' + JSON.stringify(vj), 'system');
-      }
-      renderMandate();
+    if(!r.ok){
+      let detail = await r.text();
+      try{ detail = JSON.parse(detail).detail || detail; }catch(_){}
+      addMsg('Could not set up the mandate: ' + detail, 'system');
       return;
     }
+    const order = await r.json();
 
     const options = {
       key: order.razorpay_key_id,
@@ -779,7 +754,7 @@ $('authBtn').addEventListener('click', async () => {
           state.mandate = vj.mandate;
           addMsg('Mandate authorized. I can now check out on your behalf up to your limits.', 'system');
         } else {
-          addMsg('Signature verification failed: ' + JSON.stringify(vj), 'system');
+          addMsg('Signature verification failed: ' + (vj.detail || JSON.stringify(vj)), 'system');
         }
         renderMandate();
       },
@@ -793,11 +768,14 @@ $('authBtn').addEventListener('click', async () => {
 });
 
 $('revokeBtn').addEventListener('click', async () => {
-  if(state.demoMode){ state.mandate = null; renderMandate(); return; }
-  await fetch(apiBase() + '/api/mandate/revoke', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ session_id: sessionId, mandate_id: state.mandate.mandate_id })
-  });
+  try{
+    await fetch(apiBase() + '/api/mandate/revoke', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ session_id: sessionId, mandate_id: state.mandate.mandate_id })
+    });
+  }catch(e){
+    addMsg('Error contacting backend: ' + e.message, 'system');
+  }
   state.mandate = null;
   renderMandate();
 });
@@ -810,8 +788,16 @@ async function confirmLiveCheckout(){
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ session_id: sessionId })
     });
-    const j = await r.json();
     hideThinking();
+
+    if(!r.ok){
+      let detail = await r.text();
+      try{ detail = JSON.parse(detail).detail || detail; }catch(_){}
+      addMsg(detail, 'agent');
+      return;
+    }
+
+    const j = await r.json();
     addMsg(j.reply, 'agent');
     state.cart = j.cart || [];
     if(state.mandate){
@@ -828,16 +814,12 @@ async function confirmLiveCheckout(){
 // ---------------- Chat send ----------------
 async function sendMessage(text){
   if(!text.trim()) return;
-  addMsg(text, 'user');
-  $('msgInput').value = '';
-
-  if(state.demoMode){
-    showThinking();
-    // Small artificial delay so the thinking animation is visible even
-    // though local demo mode has no real LLM round-trip to wait on.
-    setTimeout(() => { hideThinking(); handleDemoChat(text); }, 450);
+  if(!state.backendReachable){
+    addMsg('Backend unreachable — start the FastAPI server and hit Retry at the top before chatting.', 'system');
     return;
   }
+  addMsg(text, 'user');
+  $('msgInput').value = '';
 
   showThinking();
   try{
@@ -845,8 +827,18 @@ async function sendMessage(text){
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ session_id: sessionId, message: text })
     });
-    const j = await r.json();
     hideThinking();
+
+    if(!r.ok){
+      // No silent rule-based fallback anymore -- surface the backend's
+      // actual error (e.g. "AI is currently unavailable: ...") plainly.
+      let detail = await r.text();
+      try{ detail = JSON.parse(detail).detail || detail; }catch(_){}
+      addMsg(detail, 'agent');
+      return;
+    }
+
+    const j = await r.json();
     addMsg(j.reply, 'agent');
     state.cart = j.cart || [];
 
@@ -868,87 +860,6 @@ async function sendMessage(text){
     hideThinking();
     addMsg('Error contacting backend: ' + e.message, 'agent');
   }
-}
-
-// ---------------- Minimal client-side mirror of the agent, for demo mode ----------------
-async function confirmDemoCheckout(){
-  showThinking();
-  await new Promise(res => setTimeout(res, 350)); // mirror the real network round-trip
-  hideThinking();
-
-  if(!state.cart.length){ addMsg('Your cart is empty, nothing to check out.', 'agent'); return; }
-  if(!state.mandate || state.mandate.status !== 'AUTHORIZED'){
-    addMsg("Your mandate is no longer active.", 'agent'); return;
-  }
-  // Re-validate against the mandate's CURRENT state, in case it changed
-  // between preview and this click -- same fail-closed guardrail the
-  // real mandate.py enforces at debit time, not just at preview time.
-  const total = state.cart.reduce((s,i) => s + i.price, 0);
-  const m = state.mandate;
-  const reason = 'Order: ' + state.cart.map(i=>i.name).join(', ');
-  if(total > m.per_txn_cap){
-    m.ledger.push({id:'txn_demo_' + Date.now(), amount: total, reason, status:'BLOCKED'});
-    addMsg(`I stopped this purchase: ${money(total)} exceeds your per-purchase cap of ${money(m.per_txn_cap)}.`, 'agent');
-  } else if(total > m.available){
-    m.ledger.push({id:'txn_demo_' + Date.now(), amount: total, reason, status:'BLOCKED'});
-    addMsg(`I stopped this purchase: only ${money(m.available)} left on your mandate.`, 'agent');
-  } else {
-    m.utilised += total; m.available -= total;
-    m.ledger.push({id:'txn_demo_' + Date.now(), amount: total, reason, status:'SUCCESS'});
-    addMsg(`Done — debited ${money(total)} against your mandate with zero further taps.`, 'agent');
-    state.cart = [];
-  }
-  renderMandate();
-}
-
-function handleDemoChat(text){
-  const t = text.toLowerCase();
-  if(t.includes('checkout') || t.includes('buy now') || t.includes('pay now')){
-    if(!state.cart.length){ addMsg('Your cart is empty, nothing to check out.', 'agent'); return; }
-    if(!state.mandate || state.mandate.status !== 'AUTHORIZED'){
-      addMsg("You haven't authorized a mandate yet. Set one up in Payments first.", 'agent'); return;
-    }
-    // PREVIEW only, same as the live backend's node_checkout: run the
-    // guardrail check up front so we don't show Confirm & Pay for an
-    // order that's guaranteed to fail, but do NOT debit anything here.
-    const total = state.cart.reduce((s,i) => s + i.price, 0);
-    const m = state.mandate;
-    if(total > m.per_txn_cap){
-      addMsg(`I can't check out yet: ${money(total)} exceeds your per-purchase cap of ${money(m.per_txn_cap)}.`, 'agent');
-      return;
-    }
-    if(total > m.available){
-      addMsg(`I can't check out yet: only ${money(m.available)} is left on your mandate.`, 'agent');
-      return;
-    }
-    addMsg(`Ready to check out ${state.cart.map(i=>i.name).join(', ')} for ${money(total)}. Tap Confirm & Pay to complete it.`, 'agent');
-    addConfirmCard(state.cart.map(i => i.name), total, state.merchantName, () => confirmDemoCheckout());
-    return;
-  }
-  if(t.includes('view cart') || t === 'cart'){
-    if(!state.cart.length){ addMsg('Your cart is empty.', 'agent'); renderMandate(); return; }
-    addMsg('Your cart:\n' + state.cart.map(i => `- ${i.name} (${i.id}) — ${money(i.price)}`).join('\n'), 'agent');
-    renderMandate();
-    return;
-  }
-  const removeMatch = t.match(/remove\s+(sku_\d+)/);
-  if(removeMatch){
-    state.cart = state.cart.filter(i => i.id !== removeMatch[1]);
-    addMsg('Removed from your cart.', 'agent');
-    renderMandate();
-    return;
-  }
-  const skuMatch = t.match(/sku_\d+/);
-  if(t.includes('add') && skuMatch){
-    const item = DEMO_CATALOG.find(i => i.id === skuMatch[0]);
-    if(item){ state.cart.push(item); addMsg(`Added ${item.name} (${money(item.price)}) to your cart.`, 'agent'); }
-    else addMsg("I couldn't find that item id.", 'agent');
-    renderMandate();
-    return;
-  }
-  const matches = DEMO_CATALOG.filter(i => t.split(' ').some(w => w.length > 2 && i.name.toLowerCase().includes(w)));
-  const results = matches.length ? matches : DEMO_CATALOG;
-  addMsg("Here's what I found:\n" + results.map(i => `- ${i.name} (${i.id}) — ${money(i.price)}`).join('\n') + '\n\nSay "add <sku id>" to add one.', 'agent');
 }
 
 $('sendBtn').addEventListener('click', () => sendMessage($('msgInput').value));
